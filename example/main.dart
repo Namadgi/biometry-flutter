@@ -37,9 +37,7 @@ class _BiometryHomePageState extends State<BiometryHomePage> {
   void initState() {
     super.initState();
     // Initialize the Biometry instance
-    _biometry = Biometry.initialize(
-        token:
-            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTMyNzIwMDQsImp0aSI6IjY0MTg5ZjVkLWJhMzQtNGNhYi05NGNmLTA1ZTgyN2E5MDc1MSIsImlhdCI6MTcyNDI0MTYwNCwiaXNzIjoiYmlvbWV0cnktcHJvamVjdHMiLCJ1c2VyX2lkIjoiYWQzNTE1MDMtZjc2ZC00NjU3LWI5ZjktOTIwODdmMTcxODk3IiwicHJvamVjdF9pZCI6IjIwNDgyZDhhLTZiOTItNDdmOC04YmRiLTM1YjA5Zjc3MzBmNiIsInNlbGVjdGVkX3NlcnZpY2VzIjpbIkFjdGl2ZSBTcGVha2VyIERldGVjdGlvbiIsIlZpc3VhbCBTcGVlY2ggUmVjb2duaXRpb24iLCJGYWNlIExpdmVuZXNzIERldGVjdGlvbiIsIlZvaWNlIFJlY29nbml0aW9uIiwiRmFjZSBSZWNvZ25pdGlvbiJdfQ.sJopHrRJqXwfTuIlCqCUcmEJeutXURmcd6ADdfvljy4');
+    _biometry = Biometry.initialize(token: 'your-Biometry-Token');
   }
 
   @override
