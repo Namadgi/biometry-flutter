@@ -84,7 +84,7 @@ Contributions are welcome! If you would like to contribute to this package, plea
 
 ### Issues and Feedback
 
-If you encounter any issues or have any feedback, please open an issue on the [GitHub repository](https://github.com/your-username/biometry/issues).
+If you encounter any issues or have any feedback, please open an issue on the [GitHub repository](https://github.com/Funkygeek/biometry-pubdev/issues).
 
 ### License
 
