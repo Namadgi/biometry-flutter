@@ -17,13 +17,17 @@ void main() {
 
     setUp(() {
       mockHttpClient = MockClient();
-      biometry = Biometry.initialize(token: 'test-token');
+      biometry =
+          Biometry.initialize(token: 'test-token', client: mockHttpClient);
       mockFile = MockFile();
     });
 
     test('processVideo returns success response', () async {
       // Arrange
-      final mockResponse = http.Response('{"status":"success"}', 200);
+      final mockResponse = http.StreamedResponse(
+        Stream.fromIterable(['{"status":"success"}'.codeUnits]),
+        200,
+      );
 
       // Mock the behavior of the File class
       when(mockFile.length())
@@ -31,12 +35,19 @@ void main() {
       when(mockFile.path)
           .thenReturn('test/video.mp4'); // Return a valid file path
 
+      // Mock the behavior of the http.Client class
       when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-        final http.BaseRequest request = invocation.positionalArguments[0];
-        return http.StreamedResponse(
-          Stream.fromIterable([mockResponse.body.codeUnits]),
-          200,
-        );
+        final http.MultipartRequest request = invocation.positionalArguments[0];
+        expect(request.method, 'POST'); // Ensure the method is POST
+        expect(request.url.toString(),
+            'https://dev.biometry.namadgi.com.au/process-video'); // Ensure the URL is correct
+        expect(request.headers['Authorization'],
+            'Bearer test-token'); // Ensure the Authorization header is correct
+        expect(request.headers['X-User-Fullname'],
+            'John Doe'); // Ensure the X-User-Fullname header is correct
+        expect(request.fields['phrase'],
+            'one two three four five six seven eight'); // Ensure the phrase field is correct
+        return mockResponse;
       });
 
       // Act

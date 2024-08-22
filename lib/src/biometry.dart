@@ -6,11 +6,12 @@ import 'package:http_parser/http_parser.dart';
 class Biometry {
   static const String _baseUrl = 'https://dev.biometry.namadgi.com.au';
   final String _token;
+  final http.Client _client;
 
-  Biometry._(this._token);
+  Biometry._(this._token, this._client);
 
-  static Biometry initialize({required String token}) {
-    return Biometry._(token);
+  static Biometry initialize({required String token, http.Client? client}) {
+    return Biometry._(token, client ?? http.Client());
   }
 
   Future<http.Response> processVideo({
@@ -30,7 +31,7 @@ class Biometry {
       ))
       ..fields['phrase'] = phrase;
 
-    final response = await request.send();
+    final response = await _client.send(request);
     return http.Response.fromStream(response);
   }
 }
