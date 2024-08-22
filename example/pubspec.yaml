@@ -12,9 +12,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # Assuming the biometry package is located in the parent directory, relative to this example app.
-  biometry:
-    path: ../
+  # The Biometry package is the main dependency for the example app.
+  biometry: ^0.1.2
   # Adding the http package for API requests.
   http: ^1.2.2
   # File picker to allow the user to select video files.
@@ -29,6 +28,3 @@ flutter:
   # This section is used to define assets, fonts, and other package-level configurations.
   uses-material-design: true
 
-  # Uncomment this section if you have any assets, like images, fonts, or other files.
-  # assets:
-  #   - assets/
