@@ -1,0 +1,34 @@
+name: biometry_example
+description: A simple example app demonstrating the usage of the Biometry package.
+
+# The version of your example app. It doesn't need to match the package version.
+version: 0.1.0
+
+# The environment defines the Dart SDK version.
+environment:
+  sdk: ">=2.12.0 <3.0.0"
+
+# Dependencies for the example app.
+dependencies:
+  flutter:
+    sdk: flutter
+  # Assuming the biometry package is located in the parent directory, relative to this example app.
+  biometry:
+    path: ../
+  # Adding the http package for API requests.
+  http: ^1.2.2
+  # File picker to allow the user to select video files.
+  file_picker: ^8.1.2
+
+# Dev dependencies for the example app.
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  # This section is used to define assets, fonts, and other package-level configurations.
+  uses-material-design: true
+
+  # Uncomment this section if you have any assets, like images, fonts, or other files.
+  # assets:
+  #   - assets/

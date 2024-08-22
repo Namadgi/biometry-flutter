@@ -1,0 +1,32 @@
+name: biometry
+description: A Flutter package for integrating with the Biometry API to provide biometric authentication and verification services.
+version: 0.1.0
+homepage: https://biometry.com.au
+
+environment:
+  sdk: ">=2.12.0 <3.7.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  mockito: ^5.4.4
+
+  # For code generation if you use JSON serializable, etc.
+  build_runner: ^2.4.11
+  build_runner_core: ^7.3.1
+  logging: ^1.2.0
+  # Optional: If you have any models that require serialization.
+  json_serializable: ^6.8.0
+
+flutter:
+  uses-material-design: true
+
+# Uncomment this section if you include assets or any additional resources.
+# assets:
+#   - assets/images/
+#   - assets/fonts/
