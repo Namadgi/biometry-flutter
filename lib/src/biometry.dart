@@ -5,7 +5,7 @@ import 'package:http_parser/http_parser.dart';
 
 /// A class to handle biometry-related operations.
 class Biometry {
-  static const String _baseUrl = 'https://dev.biometry.namadgi.com.au';
+  static const String _baseUrl = 'https://api.biometrysolutions.com/api-gateway';
   final String _token;
   final http.Client _client;
 

@@ -4,7 +4,7 @@
 
 ## Features
 
-- **Biometric Authentication**: Easily authenticate users with biometric data such as voice and face recognition.
+- **Biometric Authentication**: Authenticate users with biometric data such as voice and face recognition.
 - **Video Processing**: Upload and process video files for biometric verification.
 - **API Integration**: Seamlessly integrate with the Biometry API using a clean and straightforward Dart interface.
 
@@ -24,7 +24,7 @@ Add `biometry` to your `pubspec.yaml`:
 ```yaml
 dependencies:
   biometry:
-    path: ../biometry  # Replace with the path or pub.dev version if published
+    path: ../biometry:0.1.4
 ```
 
 Then, run:
