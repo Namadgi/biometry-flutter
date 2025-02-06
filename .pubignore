@@ -1,9 +1,9 @@
-  example/.flutter-plugins
-    example/.idea
-    example/.pub-cache
-    example/.pub
-    example/.vscode
-    example/android/app/debug
-    example/android/app/profile
-    example/android/app/release
-    example/build
+example/.flutter-plugins
+example/.idea
+example/.pub-cache
+example/.pub
+example/.vscode
+example/android/app/debug
+example/android/app/profile
+example/android/app/release
+example/build
