@@ -40,7 +40,7 @@ void main() {
         final http.MultipartRequest request = invocation.positionalArguments[0];
         expect(request.method, 'POST'); // Ensure the method is POST
         expect(request.url.toString(),
-            'https://dev.biometry.namadgi.com.au/process-video'); // Ensure the URL is correct
+            'https://api.biometrysolutions.com/api-gateway/process-video'); // Ensure the URL is correct
         expect(request.headers['Authorization'],
             'Bearer test-token'); // Ensure the Authorization header is correct
         expect(request.headers['X-User-Fullname'],
@@ -52,7 +52,7 @@ void main() {
 
       // Act
       final response = await biometry.processVideo(
-        fullname: 'John Doe',
+        fullName: 'John Doe',
         videoFile: mockFile,
         phrase: 'one two three four five six seven eight',
       );
