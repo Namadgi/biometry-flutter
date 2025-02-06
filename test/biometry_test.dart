@@ -52,7 +52,7 @@ void main() {
 
       // Act
       final response = await biometry.processVideo(
-        fullname: 'John Doe',
+        fullName: 'John Doe',
         videoFile: mockFile,
         phrase: 'one two three four five six seven eight',
       );

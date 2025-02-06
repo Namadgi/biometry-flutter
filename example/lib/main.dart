@@ -87,7 +87,7 @@ class BiometryHomePageState extends State<BiometryHomePage> {
 
     try {
       final response = await _biometry!.processVideo(
-        fullname: _fullNameController.text,
+        fullName: _fullNameController.text,
         videoFile: _selectedVideo!,
         phrase: _phraseController.text,
       );
