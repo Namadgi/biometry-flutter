@@ -44,22 +44,22 @@ class Biometry {
       ))
       ..fields['phrase'] = phrase;
 
+    String deviceInfoJson = '';
     if (Platform.isIOS) {
       // For iOS, collect the device info and send it as a JSON string in the header.
-      final iosDeviceInfo = await _getIosDeviceInfoJson();
-      debugPrint('iOS Device Info: $iosDeviceInfo');
-      request.headers['X-Device-Info'] = iosDeviceInfo;
+      deviceInfoJson = await _getIosDeviceInfoJson();
     } else if (Platform.isAndroid) {
       // For Android, collect the device info similarly.
-      final androidDeviceInfo = await _getAndroidDeviceInfoJson();
-      debugPrint('Android Device Info: $androidDeviceInfo');
-      request.headers['X-Device-Info'] = androidDeviceInfo;
+      deviceInfoJson = await _getAndroidDeviceInfoJson();
     } else {
-      // For other platforms, send basic device info as form fields.
+      // For other platforms, collect basic device info and send it as a JSON string.
       final deviceInfo = await _getDeviceInfo();
-      request.fields.addAll(deviceInfo);
+      deviceInfoJson = jsonEncode(deviceInfo);
     }
-
+    if (kDebugMode) {
+      print('Device info: $deviceInfoJson');
+    }
+    request.headers['X-Device-Info'] = deviceInfoJson;
     final response = await _client.send(request);
     return http.Response.fromStream(response);
   }
@@ -82,13 +82,35 @@ class Biometry {
     return jsonEncode(snakeCaseMap);
   }
 
-  /// Converts the keys of a map to snake_case.
+  /// Converts the keys of a map (and any nested maps or lists) to snake_case.
   Map<String, dynamic> convertKeysToSnakeCase(Map<String, dynamic> original) {
-    return original.map((key, value) => MapEntry(key.snakeCase, value));
+    return original.map((key, value) {
+      final snakeCaseKey = key.snakeCase;
+
+      // Recursively convert if the value is a map
+      if (value is Map<String, dynamic>) {
+        return MapEntry(snakeCaseKey, convertKeysToSnakeCase(value));
+      }
+      // If the value is a list, iterate and check for nested maps
+      else if (value is List) {
+        return MapEntry(
+          snakeCaseKey,
+          value.map((item) {
+            if (item is Map<String, dynamic>) {
+              return convertKeysToSnakeCase(item); // Recursive conversion for maps in lists
+            }
+            return item; // Leave other items as is
+          }).toList(),
+        );
+      }
+
+      // For other data types, leave the value unchanged
+      return MapEntry(snakeCaseKey, value);
+    });
   }
 
   /// Collects basic device info for non-mobile platforms.
-  Future<Map<String, String>> _getDeviceInfo() async {
+  Future<Map<String, dynamic>> _getDeviceInfo() async {
     return {
       'device_os': Platform.operatingSystem,
       'device_os_version': Platform.operatingSystemVersion,
