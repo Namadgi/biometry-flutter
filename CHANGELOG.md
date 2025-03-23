@@ -1,3 +1,23 @@
+
+## [1.0.0] - 2024-03-23
+
+### Added
+- Initial stable release of the Biometry Flutter package.
+- Support for secure biometric authentication via video-based face and voice recognition.
+- Integrated document scanning using flutter_doc_scanner.
+- Biometric scanning widget (BiometryScannerWidget) for capturing user video with dynamic phrase prompts.
+- API integration for document authentication (docAuth), video processing (processVideo), and user consent management (allowConsent).
+- Device telemetry and metadata collection for audit and security purposes.
+- Customisable and testable API client with injectable HTTP client for unit tests.
+
+### Changed
+- Improved package structure for better maintainability and extensibility.
+- Enhanced documentation tailored for security-sensitive deployments.
+
+## [0.1.4] - 2025-02-11
+### Changed
+- Updated the `Biometry` class to include a new field, `sessionID`, which allows all interactions to be linked to a session.
+
 ## [0.1.3] - 2025-02-06
 ### Changed
 - Enhanced `convertKeysToSnakeCase` to support recursive conversion of nested maps and lists, ensuring consistent `snake_case` formatting for deeply nested device information.

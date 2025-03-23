@@ -15,10 +15,10 @@ void main() {
     late Biometry biometry;
     late MockFile mockFile;
 
-    setUp(() {
+    setUp(() async {
       mockHttpClient = MockClient();
-      biometry =
-          Biometry.initialize(token: 'test-token', client: mockHttpClient);
+      biometry = await Biometry.initialize(
+          token: 'test-token', client: mockHttpClient, fullName: 'John Doe');
       mockFile = MockFile();
     });
 
@@ -52,9 +52,7 @@ void main() {
 
       // Act
       final response = await biometry.processVideo(
-        fullName: 'John Doe',
         videoFile: mockFile,
-        phrase: 'one two three four five six seven eight',
       );
 
       // Assert

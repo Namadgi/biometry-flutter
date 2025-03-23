@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:biometry/biometry.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:biometry/biometry_scanner_widget.dart'; // Assume this is your SDK widget.
 import 'package:flutter/material.dart';
 
 void main() {
@@ -34,69 +34,67 @@ class BiometryHomePageState extends State<BiometryHomePage> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _fullNameController = TextEditingController();
-  final TextEditingController _phraseController = TextEditingController();
-  File? _selectedVideo;
+
+  File? _capturedFace; // This now holds the video returned from "Scan Person"
   String _result = '';
   bool _isProcessing = false;
   Biometry? _biometry;
+  bool _isBiometryInitialized = false;
 
   @override
   void dispose() {
     _tokenController.dispose();
     _fullNameController.dispose();
-    _phraseController.dispose();
     super.dispose();
   }
 
-  Future<void> _pickVideo() async {
+  /// Initializes Biometry when the "Initialize Biometry" button is pressed.
+  Future<void> _initializeBiometry() async {
+    final token = _tokenController.text.trim();
+    if (token.isEmpty) {
+      _showSnackBar('Please enter a valid token before initializing.');
+      return;
+    }
+    final fullName = _fullNameController.text.trim();
+    if (fullName.isEmpty) {
+      _showSnackBar('Please enter your full name before initializing.');
+      return;
+    }
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.video,
-      );
-      if (result != null && result.files.single.path != null) {
-        setState(() {
-          _selectedVideo = File(result.files.single.path!);
-        });
-      }
+      _biometry = await Biometry.initialize(token: token, fullName: fullName);
+      setState(() {
+        _isBiometryInitialized = true;
+      });
+      _showSnackBar(
+          'Biometry initialized with Session ID: ${_biometry!.sessionId}');
     } catch (e) {
-      _showSnackBar('Error picking video: $e');
+      _showSnackBar('Failed to initialize Biometry: $e');
     }
   }
 
-  Future<void> _processVideo() async {
-    // Validate the form and check if a video is selected.
-    if (!_formKey.currentState!.validate() || _selectedVideo == null) {
-      _showSnackBar('Please provide all required information and select a video.');
+  /// Allows consent.
+  Future<void> _allowConsent() async {
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
       return;
     }
-
-    // Retrieve the token from the text field.
-    final token = _tokenController.text.trim();
-    if (token.isEmpty) {
-      _showSnackBar('Please enter your token.');
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar(
+          'Biometry is not initialized. Please press the Initialize button.');
       return;
     }
-
     setState(() {
       _isProcessing = true;
       _result = '';
     });
-
-    // Initialise the Biometry instance with the provided token.
-    _biometry = Biometry.initialize(token: token);
-
     try {
-      final response = await _biometry!.processVideo(
-        fullName: _fullNameController.text,
-        videoFile: _selectedVideo!,
-        phrase: _phraseController.text,
-      );
-
+      final response = await _biometry!.allowConsent(consent: true);
       setState(() {
         if (response.statusCode == 200) {
-          _result = 'Video processed successfully!\n${response.body}';
+          _result = 'Consent allowed successfully!\n${response.body}';
         } else {
-          _result = 'Failed to process video: ${response.statusCode}\n${response.body}';
+          _result =
+              'Failed to allow consent: ${response.statusCode}\n${response.body}';
         }
       });
     } catch (e) {
@@ -110,19 +108,165 @@ class BiometryHomePageState extends State<BiometryHomePage> {
     }
   }
 
+  /// Processes the scanned video.
+  Future<void> _processVideo() async {
+    if (!_formKey.currentState!.validate() || _capturedFace == null) {
+      _showSnackBar(
+          'Please provide all required information and scan a person.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar(
+          'Biometry is not initialized. Please press the Initialize button.');
+      return;
+    }
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+    });
+    try {
+      final response = await _biometry!.processVideo(
+        videoFile: _capturedFace!,
+      );
+      setState(() {
+        if (response.statusCode == 200) {
+          _result = 'Video processed successfully!\n${response.body}';
+        } else {
+          _result =
+              'Failed to process video: ${response.statusCode}\n${response.body}';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'An error occurred: $e';
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
+  }
+
+  /// Processes document authentication.
+  Future<void> _processDocAuth() async {
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar(
+          'Biometry is not initialized. Please press the Initialize button.');
+      return;
+    }
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+    });
+    try {
+      final response = await _biometry!.docAuth();
+      setState(() {
+        if (response.statusCode == 200) {
+          _result = 'Document authenticated successfully!\n${response.body}';
+        } else {
+          _result =
+              'Failed to authenticate document: ${response.statusCode}\n${response.body}';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'An error occurred: $e';
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
+  }
+
+  /// Launches the BiometryScannerWidget as a modal window to scan the person's face.
+  Future<void> _scanPerson() async {
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar(
+          'Biometry is not initialized. Please press the Initialize button.');
+      return;
+    }
+    // Pass the phrase from your text field to the scanner widget.
+    final phrase = _biometry!.phraseAsIntList;
+    final captured = await showModalBottomSheet<File?>(
+      backgroundColor: Colors.white,
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return Column(
+          children: [
+            Spacer(),
+            Text(
+              "Please Speak Only The Following Numbers",
+              style: const TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.normal,
+                fontSize: 14,
+              ),
+            ),
+            SizedBox(
+              height: 10,
+            ),
+            Row(
+              children: [
+                Spacer(),
+                Icon(Icons.spatial_audio_off_rounded, color: Colors.grey),
+                SizedBox(
+                  width: 10,
+                ),
+                Text(
+                  " ${_biometry?.phraseAsIntList}",
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                Spacer(),
+              ],
+            ),
+            SizedBox(
+              child: BiometryScannerWidget(
+                phrase: phrase,
+                onCapture: (capturedVideo) {
+                  Navigator.pop(context, capturedVideo);
+                },
+              ),
+            ),
+            Spacer(),
+          ],
+        );
+      },
+    );
+    if (captured != null) {
+      setState(() {
+        _capturedFace = captured;
+      });
+      _showSnackBar('Person scanned successfully!');
+    } else {
+      _showSnackBar('Person scanning cancelled or failed.');
+    }
+  }
+
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context)
       ..removeCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Biometry Video Processing'),
+        title: const Text('Biometry Example'),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -153,37 +297,60 @@ class BiometryHomePageState extends State<BiometryHomePage> {
                   return null;
                 },
               ),
-              // Phrase Field
-              TextFormField(
-                controller: _phraseController,
-                decoration: const InputDecoration(labelText: 'Phrase'),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a phrase';
-                  }
-                  return null;
-                },
+              const SizedBox(height: 10),
+              ElevatedButton(
+                onPressed: _initializeBiometry,
+                child: const Text('Initialize Biometry'),
+              ),
+              // Consent Button
+              const SizedBox(height: 10),
+              ElevatedButton(
+                onPressed: _isBiometryInitialized ? _allowConsent : null,
+                child: const Text('Allow Consent'),
+              ),
+              // Scan Person Button (opens the scanner widget as a modal)
+              const SizedBox(height: 10),
+              ElevatedButton(
+                onPressed: _isBiometryInitialized ? _scanPerson : null,
+                child: const Text('Scan Person'),
               ),
               const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _pickVideo,
-                child: const Text('Select Video'),
+              Text(
+                "Phrase: ${_biometry?.phraseAsIntList}",
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-              if (_selectedVideo != null)
+              _isProcessing
+                  ? const CircularProgressIndicator()
+                  : Column(
+                      children: [
+                        // Process Video uses the scanned video.
+                        ElevatedButton(
+                          onPressed:
+                              (_capturedFace != null && _isBiometryInitialized)
+                                  ? _processVideo
+                                  : null,
+                          child: const Text('Process Video'),
+                        ),
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed:
+                              _isBiometryInitialized ? _processDocAuth : null,
+                          child: const Text('Document Auth'),
+                        ),
+                      ],
+                    ),
+              const SizedBox(height: 20),
+              if (_capturedFace != null)
                 Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: Text(
-                    'Selected Video: ${_selectedVideo!.path.split('/').last}',
+                    'Scanned Video Path: ${_capturedFace!.path}',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-              const SizedBox(height: 20),
-              _isProcessing
-                  ? const CircularProgressIndicator()
-                  : ElevatedButton(
-                onPressed: _selectedVideo != null ? _processVideo : null,
-                child: const Text('Process Video'),
-              ),
-              const SizedBox(height: 20),
               if (_result.isNotEmpty)
                 Text(
                   _result,
