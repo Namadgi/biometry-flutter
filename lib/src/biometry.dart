@@ -113,6 +113,7 @@ class Biometry {
     return "";
   }
 
+  /// Returns the phrase as a string of words.
   String get phraseWords {
     return _phrase.toString().split('').map((e) {
       switch (e) {
@@ -142,10 +143,12 @@ class Biometry {
     }).join(' ');
   }
 
+  /// Returns the phrase as a string of integers.
   String get phraseAsIntList {
     return _phrase.toString().split('').join(', ');
   }
 
+  /// Processes a document.
   Future<http.Response> docAuth() async {
     final uri = Uri.parse('$_apiGateway/docauth/check');
 

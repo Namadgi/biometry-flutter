@@ -16,6 +16,7 @@ class BiometryScannerWidget extends StatefulWidget {
   /// Called when the video recording completes.
   final Function(File videoFile) onCapture;
 
+  /// Creates a new [BiometryScannerWidget] instance.
   const BiometryScannerWidget({
     Key? key,
     required this.phrase,
@@ -23,14 +24,16 @@ class BiometryScannerWidget extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  _BiometryScannerWidgetState createState() => _BiometryScannerWidgetState();
+  BiometryScannerWidgetState createState() => BiometryScannerWidgetState();
 }
 
-class _BiometryScannerWidgetState extends State<BiometryScannerWidget>
+/// The state of the [BiometryScannerWidget].
+class BiometryScannerWidgetState extends State<BiometryScannerWidget>
     with TickerProviderStateMixin {
   CameraController? _cameraController;
   late Future<void> _initializeControllerFuture;
-  bool _isRecording = false;
+
+  /// The number of seconds to display based on the number of words in the phrase.
   late int scanTime;
 
   // Animation controller for the circular timer (10 seconds).
@@ -81,9 +84,7 @@ class _BiometryScannerWidgetState extends State<BiometryScannerWidget>
     if (_cameraController == null) return;
     try {
       await _cameraController!.startVideoRecording();
-      setState(() {
-        _isRecording = true;
-      });
+      setState(() {});
       // Display each word for 1 second (adjust as needed).
       _wordTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
         setState(() {
@@ -102,11 +103,9 @@ class _BiometryScannerWidgetState extends State<BiometryScannerWidget>
   void _stopRecording() async {
     if (_cameraController == null) return;
     try {
-      final xfile = await _cameraController!.stopVideoRecording();
-      setState(() {
-        _isRecording = false;
-      });
-      final videoFile = File(xfile.path);
+      final file = await _cameraController!.stopVideoRecording();
+      setState(() {});
+      final videoFile = File(file.path);
       widget.onCapture(videoFile);
     } catch (e) {
       debugPrint("Error stopping video recording: $e");
@@ -137,13 +136,7 @@ class _BiometryScannerWidgetState extends State<BiometryScannerWidget>
                     child: Center(
                       child: Transform.scale(
                         scale: _cameraController!.value.aspectRatio,
-                        child: Container(
-                          // width: MediaQuery.of(context)
-                          //     .size
-                          //     .width, // Adjust these values as needed
-                          // height: MediaQuery.of(context).size.height,
-                          child: CameraPreview(_cameraController!),
-                        ),
+                        child: CameraPreview(_cameraController!),
                       ),
                     ),
                   ),
@@ -176,8 +169,12 @@ class _BiometryScannerWidgetState extends State<BiometryScannerWidget>
 
 /// Custom painter that draws a circular progress border.
 class TimerBorderPainter extends CustomPainter {
+  /// The progress value between 0.0 and 1.0.
   final double progress; // Value between 0.0 and 1.0.
+  /// The size of the square box.
   final double boxSize;
+
+  /// Creates a new [TimerBorderPainter] instance.
   TimerBorderPainter(this.progress, {this.boxSize = 400});
 
   @override
@@ -189,7 +186,7 @@ class TimerBorderPainter extends CustomPainter {
 
     // Draw the background circle (optional).
     final backgroundPaint = Paint()
-      ..color = Colors.grey.withOpacity(0.3)
+      ..color = Colors.grey.withValues(alpha: 0.3)
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth;
     canvas.drawArc(arcRect, -pi / 2, 2 * pi, false, backgroundPaint);
