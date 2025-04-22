@@ -1,4 +1,5 @@
 import 'dart:convert'; // for jsonEncode
+import 'dart:developer' as dev;
 import 'dart:io';
 import 'dart:math';
 
@@ -9,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_doc_scanner/flutter_doc_scanner.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:recase/recase.dart';
 
 /// A class to handle biometry-related operations.
@@ -31,9 +33,13 @@ class Biometry {
   final String sessionId;
 
   /// The full name of the user, stored for subsequent API calls.
-  final String _fullName;
+  String _fullName;
 
-  Biometry._(this._token, this._client, this.sessionId, this._fullName);
+  /// The path to the image of the person.
+  String? _faceImagePath;
+
+  Biometry._(this._token, this._client, this.sessionId, this._fullName,
+      [this._faceImagePath]);
 
   /// Initializes the Biometry class with a token, full name and an optional HTTP client.
   static Future<Biometry> initialize({
@@ -44,10 +50,16 @@ class Biometry {
     await _configureAudioSession();
 
     final http.Client httpClient = client ?? http.Client();
-    String sessionId = await _fetchSessionId(token, httpClient, fullName);
+    String id = await _fetchSessionId(token, httpClient, fullName);
     Biometry._phrase = Random().nextInt(9000000000 ~/ 10) + 1000000000;
     debugPrint("Phrase: $_phrase");
-    return Biometry._(token, httpClient, sessionId, fullName);
+    return Biometry._(token, httpClient, id, fullName);
+  }
+
+  /// Disposes the Biometry class.
+  static void dispose() {
+    // Dispose of any resources if needed.
+    // For example, if you have a camera controller, you might want to dispose of it here.
   }
 
   static Future<void> _configureAudioSession() async {
@@ -64,6 +76,9 @@ class Biometry {
       androidWillPauseWhenDucked: false,
     ));
   }
+
+  /// Return the face path captured by docAuth
+  String? get faceImagePath => _faceImagePath;
 
   /// Fetches a new session ID from the API.
   static Future<String> _fetchSessionId(
@@ -85,6 +100,28 @@ class Biometry {
     } else {
       throw Exception('Failed to retrieve session ID: ${responseBody.body}');
     }
+  }
+
+  /// Ends the session by sending a POST request to the API.
+  Future<http.Response> endSession() async {
+    final uri = Uri.parse('$_apiGateway/sessions/end/$sessionId');
+    debugPrint("End session: $uri");
+    final request = http.Request('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_token'
+      ..headers['X-User-Fullname'] = _fullName;
+
+    final response = await _client.send(request);
+    if (response.statusCode == 200) {
+      // clear all files in the temp directory
+      final tempDir = await getTemporaryDirectory();
+      final tempFiles = tempDir.listSync();
+      for (var file in tempFiles) {
+        if (file is File) {
+          await file.delete();
+        }
+      }
+    }
+    return http.Response.fromStream(response);
   }
 
   /// Scans a document using the `flutter_doc_scanner` plugin.
@@ -148,24 +185,83 @@ class Biometry {
     return _phrase.toString().split('').join(', ');
   }
 
-  /// Processes a document.
-  Future<http.Response> docAuth() async {
-    final uri = Uri.parse('$_apiGateway/docauth/check');
+  /// Enrolls a face using the biometry service.
+  Future<http.Response> enrolFace() async {
+    // Check if the image path is provided.
+    if (_faceImagePath == null) {
+      throw Exception('No face image path provided');
+    }
 
-    // Take a photo of the document using flutter_doc_scanner.
-    var docFile = await scanDocument();
-    debugPrint("docFile: $docFile");
+    final uri = Uri.parse('$_apiGateway/enroll/face');
+
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_token'
+      ..headers['X-User-Fullname'] = _fullName
+      ..headers['X-Use-Prefilled-Video'] =
+          'true' // TODO: make dynamic if needed
+      ..headers['X-Session-ID'] = sessionId
+      ..files.add(
+        await http.MultipartFile.fromPath(
+          'face',
+          _faceImagePath!,
+          contentType: MediaType('application', 'png'),
+        ),
+      )
+      ..fields['isDocument'] = 'false'
+      ..fields['X-Request-User-Provided-ID'] = sessionId;
+
+    // Gather device information.
+    String deviceInfoJson = '';
+    if (Platform.isIOS) {
+      deviceInfoJson = await _getIosDeviceInfoJson();
+    } else if (Platform.isAndroid) {
+      deviceInfoJson = await _getAndroidDeviceInfoJson();
+    } else {
+      final deviceInfo = await _getDeviceInfo();
+      deviceInfoJson = jsonEncode(deviceInfo);
+    }
+
+    if (kDebugMode) {
+      print('request: $request');
+      print(
+          "X-Use-Prefilled-Video: ${request.headers['X-Use-Prefilled-Video']}");
+      print("X-Session-ID: ${request.headers['X-Session-ID']}");
+    }
+    request.headers['X-Device-Info'] = deviceInfoJson;
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    // Check response status code.
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (kDebugMode) {
+        print('Error Face match response: ${response.body}');
+      }
+      throw Exception('Face match request failed: ${response.statusCode}');
+    }
+    if (kDebugMode) {
+      print('Face match response: ${response.body}');
+    }
+    return response;
+  }
+
+  /// Enrolls voice using the biometry service.
+  Future<http.Response> enrolVoice({
+    required File videoFile,
+  }) async {
+    final uri = Uri.parse('$_apiGateway/enroll/voice');
 
     final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
       ..headers['X-User-Fullname'] = _fullName
       ..files.add(await http.MultipartFile.fromPath(
-        'document',
-        docFile,
-        contentType: MediaType('application', 'pdf'),
+        'voice',
+        videoFile.path,
+        contentType: MediaType('video', 'mp4'),
       ))
-      ..fields['X-Request-User-Provided-ID'] = sessionId;
-
+      ..fields['phrase'] = phraseWords
+      ..headers['X-Request-User-Provided-ID'] = sessionId
+      ..headers['X-Session-ID'] = sessionId;
     String deviceInfoJson = '';
     if (Platform.isIOS) {
       deviceInfoJson = await _getIosDeviceInfoJson();
@@ -182,8 +278,125 @@ class Biometry {
 
     request.headers['X-Device-Info'] = deviceInfoJson;
     final response = await _client.send(request);
-
     return http.Response.fromStream(response);
+  }
+
+  /// Processes a document using the biometry service.
+  /// Sends a POST request to the biometry service with the scanned document.
+  /// Detailed device information is gathered and sent in the header as a JSON string.
+  /// Returns a `Future<http.Response>` object.
+  /// Throws an `Exception` if the request fails.
+  /// Developer docs: https://developer.biometrysolutions.com/concepts/doc-auth/
+  ///
+  Future<http.Response> docAuth() async {
+    final uri = Uri.parse('$_apiGateway/docauth/check');
+    var docFile = await scanDocument();
+    debugPrint("docFile: $docFile");
+
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_token'
+      ..headers['X-User-Fullname'] = _fullName
+      ..files.add(await http.MultipartFile.fromPath(
+        'document',
+        docFile,
+        contentType: MediaType('application', 'png'),
+      ))
+      ..headers['X-Session-ID'] = sessionId;
+
+    String deviceInfoJson = '';
+    if (Platform.isIOS) {
+      deviceInfoJson = await _getIosDeviceInfoJson();
+    } else if (Platform.isAndroid) {
+      deviceInfoJson = await _getAndroidDeviceInfoJson();
+    } else {
+      final deviceInfo = await _getDeviceInfo();
+      deviceInfoJson = jsonEncode(deviceInfo);
+    }
+
+    if (kDebugMode) {
+      dev.log('Device info: $deviceInfoJson');
+    }
+
+    request.headers['X-Device-Info'] = deviceInfoJson;
+
+    // Send the request and wait for the response stream to complete.
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    // Process the face image from the response.
+    await _processFaceImage(response);
+
+    // Optional: Check the response status code.
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+          'DocAuth failed with status code: ${response.statusCode}');
+    }
+
+    return response;
+  }
+
+  /// Processes a face match.
+  /// Sends a POST request to the biometry service to process the face match.
+  /// Detailed device information is gathered and sent in the header as a JSON string.
+  /// Returns a `Future<http.Response>` object.
+  /// Throws an `Exception` if the request fails.
+  /// Developer docs: https://developer.biometrysolutions.com/concepts/face-match/
+  Future<http.Response> faceMatch() async {
+    // Check if the image path is provided.
+    if (_faceImagePath == null) {
+      throw Exception('No face image path provided');
+    }
+
+    final uri = Uri.parse('$_apiGateway/match-faces');
+
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_token'
+      ..headers['X-User-Fullname'] = _fullName
+      ..headers['X-Use-Prefilled-Video'] =
+          'true' // TODO: make dynamic if needed
+      ..headers['X-Session-ID'] = sessionId
+      ..files.add(
+        await http.MultipartFile.fromPath(
+          'image',
+          _faceImagePath!,
+          contentType: MediaType('application', 'png'),
+        ),
+      )
+      ..fields['X-Request-User-Provided-ID'] = sessionId;
+
+    // Gather device information.
+    String deviceInfoJson = '';
+    if (Platform.isIOS) {
+      deviceInfoJson = await _getIosDeviceInfoJson();
+    } else if (Platform.isAndroid) {
+      deviceInfoJson = await _getAndroidDeviceInfoJson();
+    } else {
+      final deviceInfo = await _getDeviceInfo();
+      deviceInfoJson = jsonEncode(deviceInfo);
+    }
+
+    if (kDebugMode) {
+      print('request: $request');
+      print(
+          "X-Use-Prefilled-Video: ${request.headers['X-Use-Prefilled-Video']}");
+      print("X-Session-ID: ${request.headers['X-Session-ID']}");
+    }
+    request.headers['X-Device-Info'] = deviceInfoJson;
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    // Check response status code.
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (kDebugMode) {
+        print('Error Face match response: ${response.body}');
+      }
+      throw Exception('Face match request failed: ${response.statusCode}');
+    }
+    if (kDebugMode) {
+      print('Face match response: ${response.body}');
+    }
+    return response;
   }
 
   /// Processes a video file.
@@ -204,8 +417,9 @@ class Biometry {
         contentType: MediaType('video', 'mp4'),
       ))
       ..fields['phrase'] = phraseWords
-      ..fields['X-Request-User-Provided-ID'] = sessionId;
-
+      ..headers['X-Request-User-Provided-ID'] =
+          sessionId //Todo: update when API is updated
+      ..headers['X-Session-ID'] = sessionId;
     String deviceInfoJson = '';
     if (Platform.isIOS) {
       deviceInfoJson = await _getIosDeviceInfoJson();
@@ -230,6 +444,40 @@ class Biometry {
   /// Developer docs: https://developer.biometrysolutions.com/concepts/consent/
   Future<http.Response> allowConsent({required bool consent}) async {
     final uri = Uri.parse('$_consentUrl/consent');
+
+    // Create a JSON body with the consent flag.
+    final body = jsonEncode({
+      'is_consent_given': consent,
+      'user_fullname': _fullName,
+    });
+
+    final request = http.Request('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_token'
+      ..headers['Content-Type'] = 'application/json'
+      ..headers['X-User-Fullname'] = _fullName
+      ..headers['X-Request-User-Provided-ID'] = sessionId
+      ..body = body;
+
+    String deviceInfoJson = '';
+    if (Platform.isIOS) {
+      deviceInfoJson = await _getIosDeviceInfoJson();
+    } else if (Platform.isAndroid) {
+      deviceInfoJson = await _getAndroidDeviceInfoJson();
+    } else {
+      final deviceInfo = await _getDeviceInfo();
+      deviceInfoJson = jsonEncode(deviceInfo);
+    }
+    request.headers['X-Device-Info'] = deviceInfoJson;
+    debugPrint("request: $request");
+    final response = await _client.send(request);
+    return http.Response.fromStream(response);
+  }
+
+  /// Allows Storage consent by sending a consent flag to the API.
+  /// This allows Biometry to keep the video and voice data for future use.
+  /// Developer docs: https://developer.biometrysolutions.com/concepts/consent/
+  Future<http.Response> allowStorageConsent({required bool consent}) async {
+    final uri = Uri.parse('$_consentUrl/strg-consent');
 
     // Create a JSON body with the consent flag.
     final body = jsonEncode({
@@ -302,5 +550,28 @@ class Biometry {
       'device_os': Platform.operatingSystem,
       'device_os_version': Platform.operatingSystemVersion,
     };
+  }
+
+  Future<void> _processFaceImage(http.Response response) async {
+    final jsonResponse = jsonDecode(utf8.decode(response.bodyBytes));
+    // Extract the base64 string. Adjust keys if necessary.
+    final faceImageBase64 = jsonResponse['data']['face_image_base64'] as String;
+    dev.log('Face image base64: $faceImageBase64');
+    // Decode the base64 string into bytes.
+    final imageBytes = base64Decode(faceImageBase64);
+
+    // Get a directory to save the file (using path_provider).
+    final directory = await getApplicationDocumentsDirectory();
+    // Create a unique file name or static name if you prefer.
+    final filePath =
+        '${directory.path}/face_match_${DateTime.now().millisecondsSinceEpoch}.png';
+
+    // Write the bytes to the file.
+    final imageFile = File(filePath);
+    await imageFile.writeAsBytes(imageBytes);
+
+    _faceImagePath = filePath;
+
+    dev.log('Face image saved to: $filePath');
   }
 }

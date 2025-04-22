@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:video_compress/video_compress.dart';
 
 /// A widget that records a video of the user's face while displaying a phrase.
 /// Once the user starts talking (simulated by auto-start after 1 second),
@@ -112,12 +113,32 @@ class BiometryScannerWidgetState extends State<BiometryScannerWidget>
     if (_cameraController == null) return;
     try {
       final file = await _cameraController!.stopVideoRecording();
+      final videoFile = await compressVideo(file.path);
       setState(() {});
-      final videoFile = File(file.path);
+
       widget.onCapture(videoFile);
     } catch (e) {
       debugPrint("Error stopping video recording: $e");
     }
+  }
+
+  /// Compresses the video file at the given path and returns the compressed file.
+  compressVideo(String videoPath) async {
+    // Get the original file size
+    final originalFileSize = File(videoPath).lengthSync();
+    debugPrint('Original video size: $originalFileSize bytes... $videoPath');
+
+    final compressedVideo = await VideoCompress.compressVideo(
+      videoPath,
+      quality: VideoQuality.DefaultQuality,
+    );
+
+    // Get the compressed file size
+    final compressedFileSize = compressedVideo!.file?.lengthSync();
+    debugPrint(
+        'Compressed video size: $compressedFileSize bytes... $videoPath');
+
+    return compressedVideo.file;
   }
 
   @override

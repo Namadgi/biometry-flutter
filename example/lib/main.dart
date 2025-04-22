@@ -1,3 +1,4 @@
+import 'dart:developer' as dev;
 import 'dart:io';
 
 import 'package:biometry/biometry.dart';
@@ -35,7 +36,7 @@ class BiometryHomePageState extends State<BiometryHomePage> {
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _fullNameController = TextEditingController();
 
-  File? _capturedFace; // This now holds the video returned from "Scan Person"
+  File? _capturedVideo; // This now holds the video returned from "Scan Person"
   String _result = '';
   bool _isProcessing = false;
   Biometry? _biometry;
@@ -108,9 +109,81 @@ class BiometryHomePageState extends State<BiometryHomePage> {
     }
   }
 
+  /// Allows consent.
+  Future<void> _allowStorageConsent() async {
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar(
+          'Biometry is not initialized. Please press the Initialize button.');
+      return;
+    }
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+    });
+    try {
+      final response = await _biometry!.allowStorageConsent(consent: true);
+      setState(() {
+        if (response.statusCode == 200) {
+          _result = 'Storage Consent allowed successfully!\n${response.body}';
+        } else {
+          _result =
+              'Failed to allow storage consent: ${response.statusCode}\n${response.body}';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'An error occurred: $e';
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
+  }
+
+  /// End Session.
+  Future<void> _endSession() async {
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar(
+          'Biometry is not initialized. Please press the Initialize button.');
+      return;
+    }
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+    });
+    try {
+      final response = await _biometry!.endSession();
+      setState(() {
+        if (response.statusCode == 200) {
+          _result = 'Session ended successfully!\n${response.body}';
+        } else {
+          _result =
+              'Failed to end the session: ${response.statusCode}\n${response.body}';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'An error occurred: $e';
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
+  }
+
   /// Processes the scanned video.
   Future<void> _processVideo() async {
-    if (!_formKey.currentState!.validate() || _capturedFace == null) {
+    if (!_formKey.currentState!.validate() || _capturedVideo == null) {
       _showSnackBar(
           'Please provide all required information and scan a person.');
       return;
@@ -126,7 +199,7 @@ class BiometryHomePageState extends State<BiometryHomePage> {
     });
     try {
       final response = await _biometry!.processVideo(
-        videoFile: _capturedFace!,
+        videoFile: _capturedVideo!,
       );
       setState(() {
         if (response.statusCode == 200) {
@@ -170,6 +243,42 @@ class BiometryHomePageState extends State<BiometryHomePage> {
         } else {
           _result =
               'Failed to authenticate document: ${response.statusCode}\n${response.body}';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'An error occurred: $e';
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
+  }
+
+  /// Processes face match.
+  Future<void> _faceMatch() async {
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar(
+          'Biometry is not initialized. Please press the Initialize button.');
+      return;
+    }
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+    });
+    try {
+      final response = await _biometry!.faceMatch();
+      setState(() {
+        if (response.statusCode == 200) {
+          _result = 'Face match processed successfully!\n${response.body}';
+        } else {
+          _result =
+              'Failed to match face: ${response.statusCode}\n${response.body}';
         }
       });
     } catch (e) {
@@ -237,6 +346,7 @@ class BiometryHomePageState extends State<BiometryHomePage> {
               child: BiometryScannerWidget(
                 phrase: phrase,
                 onCapture: (capturedVideo) {
+                  dev.log('Captured video: ${capturedVideo.path}');
                   Navigator.pop(context, capturedVideo);
                 },
               ),
@@ -248,7 +358,7 @@ class BiometryHomePageState extends State<BiometryHomePage> {
     );
     if (captured != null) {
       setState(() {
-        _capturedFace = captured;
+        _capturedVideo = captured;
       });
       _showSnackBar('Person scanned successfully!');
     } else {
@@ -292,28 +402,26 @@ class BiometryHomePageState extends State<BiometryHomePage> {
                 decoration: const InputDecoration(labelText: 'Full Name'),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
-                    return 'Please enter your full name';
+                    return 'Please enter the full name';
                   }
                   return null;
                 },
               ),
               const SizedBox(height: 10),
+              // Initialize Biometry Button
               ElevatedButton(
                 onPressed: _initializeBiometry,
                 child: const Text('Initialize Biometry'),
               ),
-              // Consent Button
-              const SizedBox(height: 10),
-              ElevatedButton(
-                onPressed: _isBiometryInitialized ? _allowConsent : null,
-                child: const Text('Allow Consent'),
-              ),
-              // Scan Person Button (opens the scanner widget as a modal)
+              //--
+              // Scan Person Button
               const SizedBox(height: 10),
               ElevatedButton(
                 onPressed: _isBiometryInitialized ? _scanPerson : null,
                 child: const Text('Scan Person'),
               ),
+              //--
+              // Display the random phrase
               const SizedBox(height: 20),
               Text(
                 "Phrase: ${_biometry?.phraseAsIntList}",
@@ -329,7 +437,7 @@ class BiometryHomePageState extends State<BiometryHomePage> {
                         // Process Video uses the scanned video.
                         ElevatedButton(
                           onPressed:
-                              (_capturedFace != null && _isBiometryInitialized)
+                              (_capturedVideo != null && _isBiometryInitialized)
                                   ? _processVideo
                                   : null,
                           child: const Text('Process Video'),
@@ -340,15 +448,51 @@ class BiometryHomePageState extends State<BiometryHomePage> {
                               _isBiometryInitialized ? _processDocAuth : null,
                           child: const Text('Document Auth'),
                         ),
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed: _isBiometryInitialized ? _faceMatch : null,
+                          child: const Text('Face Match Against Document'),
+                        ),
+                        // Consent Button
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed:
+                              _isBiometryInitialized ? _allowConsent : null,
+                          child: const Text('Consent to Use Biometrics'),
+                        ),
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed: _isBiometryInitialized
+                              ? _allowStorageConsent
+                              : null,
+                          child: const Text('Consent to Store Biometrics'),
+                        ),
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed:
+                              _isBiometryInitialized ? _endSession : null,
+                          child: const Text('End Session'),
+                        ),
+                        const SizedBox(height: 10),
+                        // Scan Person Button (opens the scanner widget as a modal)
                       ],
                     ),
               const SizedBox(height: 20),
-              if (_capturedFace != null)
+              if (_capturedVideo != null)
                 Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: Text(
-                    'Scanned Video Path: ${_capturedFace!.path}',
+                    'Scanned Video Path: ${_capturedVideo!.path}',
                     style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+
+              // Display the captured video from the faceImagePath
+              if (_biometry?.faceImagePath?.isNotEmpty ?? false)
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Image(
+                    image: FileImage(File(_biometry!.faceImagePath!)),
                   ),
                 ),
               if (_result.isNotEmpty)

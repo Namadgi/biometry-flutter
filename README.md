@@ -18,7 +18,7 @@ This package is tailored specifically for developers building high-security appl
 ### Prerequisites
 
 - Obtain an API token from [Biometry](https://biometry.com.au).
-- Flutter SDK version `>=2.12.0 <3.7.0`
+- Flutter SDK version `>=3.0.0 <4.0.0`
 - Android minimum SDK version: 21
 - iOS minimum platform version: 13.0
 
