@@ -22,11 +22,11 @@ class BiometryScannerWidget extends StatefulWidget {
 
   /// Creates a new [BiometryScannerWidget] instance.
   const BiometryScannerWidget({
-    Key? key,
+    super.key,
     required this.phrase,
     required this.onCapture,
     this.testController,
-  }) : super(key: key);
+  });
 
   @override
   BiometryScannerWidgetState createState() => BiometryScannerWidgetState();

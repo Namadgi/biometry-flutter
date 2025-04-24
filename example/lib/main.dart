@@ -292,6 +292,84 @@ class BiometryHomePageState extends State<BiometryHomePage> {
     }
   }
 
+  Future<void> _enrollVoice() async {
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar(
+          'Biometry is not initialized. Please press the Initialize button.');
+      return;
+    }
+    if (_capturedVideo == null) {
+      _showSnackBar('Please scan a person first to capture a video.');
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+    });
+
+    try {
+      final response = await _biometry!.enrolVoice(videoFile: _capturedVideo!);
+      setState(() {
+        if (response.statusCode == 200) {
+          _result = 'Voice enrolled successfully!\n${response.body}';
+        } else {
+          _result =
+              'Failed to enroll voice: ${response.statusCode}\n${response.body}';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'An error occurred: $e';
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
+  }
+
+  Future<void> _enrollFace() async {
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar(
+          'Biometry is not initialized. Please press the Initialize button.');
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+    });
+
+    try {
+      final response = await _biometry!.enrolFace();
+      setState(() {
+        if (response.statusCode == 200) {
+          _result = 'Face enrolled successfully!\n${response.body}';
+        } else {
+          _result =
+              'Failed to enroll face: ${response.statusCode}\n${response.body}';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'An error occurred: $e';
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
+  }
+
   /// Launches the BiometryScannerWidget as a modal window to scan the person's face.
   Future<void> _scanPerson() async {
     if (!_formKey.currentState!.validate()) {
@@ -447,6 +525,18 @@ class BiometryHomePageState extends State<BiometryHomePage> {
                           onPressed:
                               _isBiometryInitialized ? _processDocAuth : null,
                           child: const Text('Document Auth'),
+                        ),
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed:
+                              _isBiometryInitialized ? _enrollFace : null,
+                          child: const Text('Enroll Face'),
+                        ),
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed:
+                              _isBiometryInitialized ? _enrollVoice : null,
+                          child: const Text('Enroll Voice'),
                         ),
                         const SizedBox(height: 10),
                         ElevatedButton(

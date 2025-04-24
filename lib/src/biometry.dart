@@ -1,7 +1,6 @@
 import 'dart:convert'; // for jsonEncode
 import 'dart:developer' as dev;
 import 'dart:io';
-import 'dart:math';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:device_info_plus/device_info_plus.dart';
@@ -12,6 +11,8 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:recase/recase.dart';
+
+import 'package:uuid/uuid.dart';
 
 /// A class to handle biometry-related operations.
 ///   - [initialize] - Initializes the Biometry class with a token, full name and an optional HTTP client.
@@ -38,8 +39,7 @@ class Biometry {
   /// The path to the image of the person.
   String? _faceImagePath;
 
-  Biometry._(this._token, this._client, this.sessionId, this._fullName,
-      [this._faceImagePath]);
+  Biometry._(this._token, this._client, this.sessionId, this._fullName);
 
   /// Initializes the Biometry class with a token, full name and an optional HTTP client.
   static Future<Biometry> initialize({
@@ -51,7 +51,10 @@ class Biometry {
 
     final http.Client httpClient = client ?? http.Client();
     String id = await _fetchSessionId(token, httpClient, fullName);
-    Biometry._phrase = Random().nextInt(9000000000 ~/ 10) + 1000000000;
+    Biometry._phrase = int.parse(
+      (List.generate(10, (i) => i)..shuffle()).join(),
+    );
+
     debugPrint("Phrase: $_phrase");
     return Biometry._(token, httpClient, id, fullName);
   }
@@ -187,9 +190,9 @@ class Biometry {
 
   /// Enrolls a face using the biometry service.
   Future<http.Response> enrolFace() async {
-    // Check if the image path is provided.
     if (_faceImagePath == null) {
-      throw Exception('No face image path provided');
+      throw Exception(
+          'No face image available. Please authenticate a document first.');
     }
 
     final uri = Uri.parse('$_apiGateway/enroll/face');
@@ -197,20 +200,19 @@ class Biometry {
     final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
       ..headers['X-User-Fullname'] = _fullName
-      ..headers['X-Use-Prefilled-Video'] =
-          'true' // TODO: make dynamic if needed
+      ..headers['X-Request-User-Provided-ID'] = sessionId
       ..headers['X-Session-ID'] = sessionId
       ..files.add(
         await http.MultipartFile.fromPath(
           'face',
           _faceImagePath!,
-          contentType: MediaType('application', 'png'),
+          contentType: MediaType(
+              'image', _faceImagePath!.split('.').last), // Dynamic content type
         ),
       )
-      ..fields['isDocument'] = 'false'
-      ..fields['X-Request-User-Provided-ID'] = sessionId;
+      ..fields['is_document'] = 'false';
 
-    // Gather device information.
+    // Device info gathering
     String deviceInfoJson = '';
     if (Platform.isIOS) {
       deviceInfoJson = await _getIosDeviceInfoJson();
@@ -220,27 +222,25 @@ class Biometry {
       final deviceInfo = await _getDeviceInfo();
       deviceInfoJson = jsonEncode(deviceInfo);
     }
+    request.headers['X-Device-Info'] = deviceInfoJson;
 
     if (kDebugMode) {
-      print('request: $request');
-      print(
-          "X-Use-Prefilled-Video: ${request.headers['X-Use-Prefilled-Video']}");
-      print("X-Session-ID: ${request.headers['X-Session-ID']}");
+      print('Enrol Face request: $request');
+      print('Headers: ${request.headers}');
     }
-    request.headers['X-Device-Info'] = deviceInfoJson;
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
-    // Check response status code.
     if (response.statusCode < 200 || response.statusCode >= 300) {
       if (kDebugMode) {
-        print('Error Face match response: ${response.body}');
+        print('Error Enrol Face response: ${response.body}');
       }
-      throw Exception('Face match request failed: ${response.statusCode}');
+      throw Exception('Face enrollment failed: ${response.statusCode}');
     }
+
     if (kDebugMode) {
-      print('Face match response: ${response.body}');
+      print('Enrol Face response: ${response.body}');
     }
     return response;
   }
@@ -251,17 +251,24 @@ class Biometry {
   }) async {
     final uri = Uri.parse('$_apiGateway/enroll/voice');
 
+    final fileExtension = videoFile.path.split('.').last.toLowerCase();
+    final contentType =
+        MediaType('video', fileExtension); // Dynamic content type
+
     final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
       ..headers['X-User-Fullname'] = _fullName
+      ..headers['X-Request-User-Provided-ID'] = sessionId
+      ..headers['X-Session-ID'] = sessionId
       ..files.add(await http.MultipartFile.fromPath(
         'voice',
         videoFile.path,
-        contentType: MediaType('video', 'mp4'),
+        contentType: contentType,
       ))
-      ..fields['phrase'] = phraseWords
-      ..headers['X-Request-User-Provided-ID'] = sessionId
-      ..headers['X-Session-ID'] = sessionId;
+      ..fields['unique_id'] = Uuid().v4() // Generate unique ID
+      ..fields['phrase'] = phraseWords;
+
+    // Device info gathering
     String deviceInfoJson = '';
     if (Platform.isIOS) {
       deviceInfoJson = await _getIosDeviceInfoJson();
@@ -271,14 +278,28 @@ class Biometry {
       final deviceInfo = await _getDeviceInfo();
       deviceInfoJson = jsonEncode(deviceInfo);
     }
+    request.headers['X-Device-Info'] = deviceInfoJson;
 
     if (kDebugMode) {
-      print('Device info: $deviceInfoJson');
+      print('Enrol Voice request: $request');
+      print('Headers: ${request.headers}');
+      print('Fields: ${request.fields}');
     }
 
-    request.headers['X-Device-Info'] = deviceInfoJson;
-    final response = await _client.send(request);
-    return http.Response.fromStream(response);
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (kDebugMode) {
+        print('Error Enrol Voice response: ${response.body}');
+      }
+      throw Exception('Voice enrollment failed: ${response.statusCode}');
+    }
+
+    if (kDebugMode) {
+      print('Enrol Voice response: ${response.body}');
+    }
+    return response;
   }
 
   /// Processes a document using the biometry service.
