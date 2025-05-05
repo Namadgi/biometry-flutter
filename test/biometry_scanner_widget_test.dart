@@ -84,6 +84,8 @@ void main() {
     final tempDir = Directory.systemTemp.createTempSync();
     final tempFilePath = '${tempDir.path}/fake_video.mp4';
 
+    // Create the temporary file to ensure it exists.
+    final tempFile = File(tempFilePath)..createSync();
     // Update FakeXFile to use the temporary file path.
     final fakeXFile = FakeXFile(tempFilePath);
 
@@ -112,8 +114,10 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
 
     expect(capturedFile, isNotNull);
-    expect(capturedFile!.path, equals('fake_path/video.mp4'));
-        // Clean up the temporary file.
-    capturedFile!.deleteSync();
+    expect(capturedFile!.path, equals(tempFilePath));
+        
+    // Clean up the temporary file and directory.
+    tempFile.deleteSync();
+    tempDir.deleteSync();
   });
 }
