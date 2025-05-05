@@ -77,9 +77,19 @@ void main() {
   // *** IMPORTANT: Stub buildPreview() so that the CameraPreview widget can call it.
   when(mockCameraController.buildPreview()).thenReturn(Container());
 
-  testWidgets(
+    testWidgets(
       'BiometryScannerWidget builds and calls onCapture after phrase time (dependency injection)',
       (WidgetTester tester) async {
+    // Create a temporary file path for the fake video.
+    final tempDir = Directory.systemTemp.createTempSync();
+    final tempFilePath = '${tempDir.path}/fake_video.mp4';
+
+    // Update FakeXFile to use the temporary file path.
+    final fakeXFile = FakeXFile(tempFilePath);
+
+    // Stub stopVideoRecording() to return the updated FakeXFile.
+    when(mockCameraController.stopVideoRecording()).thenAnswer((_) async => fakeXFile);
+
     File? capturedFile;
     void onCaptureCallback(File file) {
       capturedFile = file;
@@ -103,5 +113,7 @@ void main() {
 
     expect(capturedFile, isNotNull);
     expect(capturedFile!.path, equals('fake_path/video.mp4'));
+        // Clean up the temporary file.
+    capturedFile!.deleteSync();
   });
 }
