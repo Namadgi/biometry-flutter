@@ -113,11 +113,16 @@ class BiometryScannerWidgetState extends State<BiometryScannerWidget>
     if (_cameraController == null) return;
     try {
       final file = await _cameraController!.stopVideoRecording();
-      final videoFile = await compressVideo(file.path);
+      File videoFile;
+      try {
+        final compressedFile = await compressVideo(file.path);
+        videoFile = compressedFile ?? File(file.path);
+      } catch (e) {
+        videoFile = File(file.path);
+      }
       setState(() {});
-
       widget.onCapture(videoFile);
-    } catch (e) {
+    } catch (e, stack) {
       debugPrint("Error stopping video recording: $e");
     }
   }

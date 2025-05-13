@@ -30,6 +30,26 @@ class FakeXFile implements XFile {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class TestBiometryScannerWidget extends BiometryScannerWidget {
+  TestBiometryScannerWidget({
+    super.key,
+    required super.phrase,
+    required super.onCapture,
+    super.testController,
+  });
+
+  @override
+  BiometryScannerWidgetState createState() => TestBiometryScannerWidgetState();
+}
+
+class TestBiometryScannerWidgetState extends BiometryScannerWidgetState {
+  @override
+  Future<File> compressVideo(String videoPath) async {
+    print('mock compressVideo called for path: $videoPath');
+    return File(videoPath);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -77,47 +97,53 @@ void main() {
   // *** IMPORTANT: Stub buildPreview() so that the CameraPreview widget can call it.
   when(mockCameraController.buildPreview()).thenReturn(Container());
 
-    testWidgets(
-      'BiometryScannerWidget builds and calls onCapture after phrase time (dependency injection)',
-      (WidgetTester tester) async {
-    // Create a temporary file path for the fake video.
-    final tempDir = Directory.systemTemp.createTempSync();
-    final tempFilePath = '${tempDir.path}/fake_video.mp4';
+  testWidgets(
+    'BiometryScannerWidget builds and calls onCapture after phrase time (dependency injection)',
+    (WidgetTester tester) async {
+      // Create a temporary file path for the fake video.
+      final tempDir = Directory.systemTemp.createTempSync();
+      final tempFilePath = '${tempDir.path}/fake_video.mp4';
 
-    // Create the temporary file to ensure it exists.
-    final tempFile = File(tempFilePath)..createSync();
-    // Update FakeXFile to use the temporary file path.
-    final fakeXFile = FakeXFile(tempFilePath);
+      // Create the temporary file to ensure it exists.
+      final tempFile = File(tempFilePath)..createSync();
+      // Update FakeXFile to use the temporary file path.
+      final fakeXFile = FakeXFile(tempFilePath);
 
-    // Stub stopVideoRecording() to return the updated FakeXFile.
-    when(mockCameraController.stopVideoRecording()).thenAnswer((_) async => fakeXFile);
+      // Stub stopVideoRecording() to return the updated FakeXFile.
+      when(mockCameraController.stopVideoRecording())
+          .thenAnswer((_) async => fakeXFile);
 
-    File? capturedFile;
-    void onCaptureCallback(File file) {
-      capturedFile = file;
-    }
+      File? capturedFile;
+      void onCaptureCallback(File file) {
+        print('onCapture called with file: ${file.path}');
+        capturedFile = file;
+      }
 
-    // Inject the mockCameraController via the testController parameter.
-    await tester.pumpWidget(
-      MaterialApp(
-        home: BiometryScannerWidget(
-          phrase: 'One Two Three',
-          onCapture: onCaptureCallback,
-          testController: mockCameraController,
+      // Inject the mockCameraController via the testController parameter.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: TestBiometryScannerWidget(
+            phrase: 'One Two Three',
+            onCapture: onCaptureCallback,
+            testController: mockCameraController,
+          ),
         ),
-      ),
-    );
+      );
 
-    // Allow the FutureBuilder to complete and the controller to initialize.
-    await tester.pump();
-    // Wait for the recording flow: 1-second delay + 3 seconds for phrase display + a bit of buffer.
-    await tester.pump(const Duration(seconds: 5));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
 
-    expect(capturedFile, isNotNull);
-    expect(capturedFile!.path, equals(tempFilePath));
-        
-    // Clean up the temporary file and directory.
-    tempFile.deleteSync();
-    tempDir.deleteSync();
-  });
+      expect(capturedFile, isNotNull,
+          reason: 'onCapture should have been called');
+      expect(capturedFile!.path, equals(tempFilePath),
+          reason: 'Captured file path should match');
+
+      // Clean up the temporary file and directory.
+      tempFile.deleteSync();
+      tempDir.deleteSync();
+    },
+  );
 }
