@@ -129,7 +129,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
     try {
       final response = await operation;
       setState(() {
-        if (response.statusCode == 200) {
+        if (response.statusCode == 200 || response.statusCode == 201) {
           _result = '$successMessage\n${response.body}';
         } else {
           _result = '$errorMessage: ${response.statusCode}\n${response.body}';
