@@ -1,3 +1,3 @@
-library biometry;
+library;
 
 export 'src/biometry.dart';

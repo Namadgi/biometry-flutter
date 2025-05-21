@@ -122,7 +122,7 @@ class BiometryScannerWidgetState extends State<BiometryScannerWidget>
       }
       setState(() {});
       widget.onCapture(videoFile);
-    } catch (e, stack) {
+    } catch (e) {
       debugPrint("Error stopping video recording: $e");
     }
   }
