@@ -1,94 +1,151 @@
 # Biometry
 
-`Biometry` is a Flutter package that allows developers to integrate biometric authentication and verification into their Flutter applications using the Biometry API. This package simplifies the process of handling biometric data, making it easy to authenticate users securely.
+**Biometry** is a secure, reliable Flutter package designed to simplify biometric authentication and identity verification in mobile applications. Leveraging advanced biometric technologies, Biometry integrates seamlessly with the Biometry API, supporting video-based facial and voice authentication, document verification, user consent management, and secure device telemetry.
+
+This package is tailored specifically for developers building high-security applications, such as banking, finance, identity verification, and compliance-driven projects.
 
 ## Features
 
-- **Biometric Authentication**: Authenticate users with biometric data such as voice and face recognition.
-- **Video Processing**: Upload and process video files for biometric verification.
-- **API Integration**: Seamlessly integrate with the Biometry API using a clean and straightforward Dart interface.
+- **Biometric Authentication**: Secure facial and voice recognition through video input.
+- **Document Scanning & Verification**: Built-in scanning using the `flutter_doc_scanner` plugin.
+- **Biometric Scanner Widget**: User-friendly camera widget with guided video capture.
+- **Consent Management**: Integrated consent handling aligned with security best practices.
+- **Device Telemetry**: Automatic collection of comprehensive device metadata.
+- **Extensible & Testable API**: Designed for ease of testing and extensibility.
 
 ## Getting Started
 
 ### Prerequisites
 
-Before you can start using the `Biometry` package, you need to:
-
-1. Obtain an API token from the Biometry service.
-2. Ensure your Flutter environment is set up. You can check the official [Flutter installation guide](https://flutter.dev/docs/get-started/install) for help.
+- Obtain an API token from [Biometry](https://biometry.com.au).
+- Flutter SDK version `>=3.0.0 <4.0.0`
+- Android minimum SDK version: 21
+- iOS minimum platform version: 13.0
 
 ### Installation
 
-Add `biometry` to your `pubspec.yaml`:
+Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  biometry:0.1.3
+  biometry: ^1.0.1
 ```
 
-Then, run:
+Run:
 
-```sh
+```bash
 flutter pub get
+```
+
+## Platform Setup
+
+### Android
+
+Update your `android/app/build.gradle`:
+
+```gradle
+defaultConfig {
+  minSdkVersion 21
+}
+```
+
+### iOS
+
+Update `ios/Podfile`:
+
+```ruby
+platform :ios, '13.0'
+```
+
+Configure camera permissions in `Info.plist`:
+
+```xml
+<key>NSCameraUsageDescription</key>
+<string>This app requires camera access for biometric authentication.</string>
+```
+
+Enable camera permissions via the `Podfile`:
+
+```ruby
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '$(inherited)',
+        'PERMISSION_CAMERA=1',
+      ]
+    end
+  end
+end
 ```
 
 ## Usage
 
-### Initialize the Biometry SDK
-
-Initialize the `Biometry` class with your API token:
+### Initializing Biometry
 
 ```dart
-import 'package:biometry/biometry.dart';
-
-void main() {
-  final biometry = Biometry.initialize(token: 'your-api-token');
-
-  // Now you can use the biometry instance to perform operations
-}
+final biometry = await Biometry.initialize(
+  token: 'your-api-token',
+  fullName: 'John Doe',
+);
 ```
 
-### Process a Video for Biometric Verification
-
-Here’s how you can process a video file for biometric verification:
+### Displaying the Verification Phrase
 
 ```dart
-import 'dart:io';
-
-void processVideo(Biometry biometry) async {
-  final videoFile = File('/path/to/your/video.mp4');
-  final response = await biometry.processVideo(
-    fullname: 'John Doe',
-    videoFile: videoFile,
-    phrase: 'one two three four five six seven eight',
-  );
-
-  if (response.statusCode == 200) {
-    print('Video processed successfully: ${response.body}');
-  } else {
-    print('Failed to process video: ${response.statusCode}');
-  }
-}
+print(biometry.phraseWords); // Example output: "One Two Three Four Five"
 ```
 
-### Example App
+### Using the Scanner Widget
 
-You can find a complete example in the `example/` directory of this package. The example demonstrates how to integrate the Biometry package into a Flutter app.
+```dart
+BiometryScannerWidget(
+  phrase: biometry.phraseWords,
+  onCapture: (videoFile) async {
+    final response = await biometry.processVideo(videoFile: videoFile);
+    print(response.body);
+  },
+);
+```
 
-## Additional Information
+### Document Authentication
 
-### Contributions
+```dart
+final response = await biometry.docAuth();
+print(response.body);
+```
 
-Contributions are welcome! If you would like to contribute to this package, please fork the repository and submit a pull request. Make sure to follow the contribution guidelines.
+### Consent Handling
 
-### Issues and Feedback
+```dart
+final response = await biometry.allowConsent(consent: true);
+print(response.body);
+```
 
-If you encounter any issues or have any feedback, please open an issue on the [GitHub repository](https://github.com/Funkygeek/biometry-pubdev/issues).
+## Example Application
 
-### License
+A complete, functional example application is provided within the [`example/`](example/) directory of the package.
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
+## Security and Privacy
 
-### More Information
+Biometry adheres to strict security standards:
+- Authentication via secure API tokens.
+- Collection and secure transmission of detailed device information.
+- Session-specific unique identifiers for enhanced traceability.
+- No persistent storage or logging of biometric data within the package.
 
-For more detailed documentation on the Biometry API, visit the [official documentation](https://dev.biometry.namadgi.com.au/dev-portal/overview/).
+For further security guidance, refer to the [Biometry Developer Portal](https://dev.biometry.namadgi.com.au/dev-portal/overview/).
+
+## Contributing
+
+Contributions are welcome. Please open an issue or submit a pull request on the [GitHub repository](https://github.com/Funkygeek/biometry-pubdev/issues).
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Further Information
+
+- [Biometry Homepage](https://biometry.com.au)
+- [Developer Documentation](https://dev.biometry.namadgi.com.au/dev-portal/overview/)
+
