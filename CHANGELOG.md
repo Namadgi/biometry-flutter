@@ -1,3 +1,9 @@
+## [1.0.2] - 2025-05-21
+
+### Changed
+- Bumped dependencies in `pubspec.yaml` to their latest compatible versions for improved stability and performance.
+- Refreshed and corrected README links to point to the most up-to-date documentation and resources.
+
 ## [1.0.1] - 2025-05-21
 
 ### Added
