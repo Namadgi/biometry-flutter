@@ -22,11 +22,11 @@ class BiometryScannerWidget extends StatefulWidget {
 
   /// Creates a new [BiometryScannerWidget] instance.
   const BiometryScannerWidget({
-    Key? key,
+    super.key,
     required this.phrase,
     required this.onCapture,
     this.testController,
-  }) : super(key: key);
+  });
 
   @override
   BiometryScannerWidgetState createState() => BiometryScannerWidgetState();
@@ -113,9 +113,14 @@ class BiometryScannerWidgetState extends State<BiometryScannerWidget>
     if (_cameraController == null) return;
     try {
       final file = await _cameraController!.stopVideoRecording();
-      final videoFile = await compressVideo(file.path);
+      File videoFile;
+      try {
+        final compressedFile = await compressVideo(file.path);
+        videoFile = compressedFile ?? File(file.path);
+      } catch (e) {
+        videoFile = File(file.path);
+      }
       setState(() {});
-
       widget.onCapture(videoFile);
     } catch (e) {
       debugPrint("Error stopping video recording: $e");
