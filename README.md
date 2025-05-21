@@ -17,7 +17,7 @@ This package is tailored specifically for developers building high-security appl
 
 ### Prerequisites
 
-- Obtain an API token from [Biometry](https://biometry.com.au).
+- Obtain an API token from [Biometry](https://console.biometrysolutions.com).
 - Flutter SDK version `>=3.0.0 <4.0.0`
 - Android minimum SDK version: 21
 - iOS minimum platform version: 13.0
@@ -28,7 +28,7 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  biometry: ^1.0.1
+  biometry: ^1.0.2
 ```
 
 Run:
@@ -134,11 +134,11 @@ Biometry adheres to strict security standards:
 - Session-specific unique identifiers for enhanced traceability.
 - No persistent storage or logging of biometric data within the package.
 
-For further security guidance, refer to the [Biometry Developer Portal](https://dev.biometry.namadgi.com.au/dev-portal/overview/).
+For further security guidance, refer to the [Biometry Developer Portal](https://developer.biometrysolutions.com/overview/).
 
 ## Contributing
 
-Contributions are welcome. Please open an issue or submit a pull request on the [GitHub repository](https://github.com/Funkygeek/biometry-pubdev/issues).
+Contributions are welcome. Please open an issue or submit a pull request on the [GitHub repository](https://github.com/Namadgi/biometry-flutter/issues).
 
 ## License
 
@@ -146,6 +146,6 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Further Information
 
-- [Biometry Homepage](https://biometry.com.au)
-- [Developer Documentation](https://dev.biometry.namadgi.com.au/dev-portal/overview/)
+- [Biometry Homepage](https://biometrysolutions.com/)
+- [Developer Documentation](https://developer.biometrysolutions.com/overview/)
 
