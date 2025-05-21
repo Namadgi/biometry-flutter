@@ -104,7 +104,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   // method to handle biometric operations
   Future<void> _executeBiometricOperation({
-    required Future<dynamic> operation,
+    required Future<dynamic> Function() operationCallback,
     required String successMessage,
     required String errorMessage,
     bool requireVideo = false,
@@ -127,7 +127,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
       _animationController.forward();
     });
     try {
-      final response = await operation;
+      final response = await operationCallback();
       setState(() {
         if (response.statusCode == 200 || response.statusCode == 201) {
           _result = '$successMessage\n${response.body}';
@@ -161,7 +161,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _allowConsent() async {
     await _executeBiometricOperation(
-      operation: _biometry!.allowConsent(consent: true),
+      operationCallback: () => _biometry!.allowConsent(consent: true),
       successMessage: 'Consent allowed successfully!',
       errorMessage: 'Failed to allow consent',
     );
@@ -169,7 +169,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _allowStorageConsent() async {
     await _executeBiometricOperation(
-      operation: _biometry!.allowStorageConsent(consent: true),
+      operationCallback: () => _biometry!.allowStorageConsent(consent: true),
       successMessage: 'Storage Consent allowed successfully!',
       errorMessage: 'Failed to allow storage consent',
     );
@@ -177,7 +177,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _endSession() async {
     await _executeBiometricOperation(
-      operation: _biometry!.endSession(),
+      operationCallback: () => _biometry!.endSession(),
       successMessage: 'Session ended successfully!',
       errorMessage: 'Failed to end session',
     );
@@ -192,7 +192,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _processVideo() async {
     await _executeBiometricOperation(
-      operation: _biometry!.processVideo(videoFile: _capturedVideo!),
+      operationCallback: () =>
+          _biometry!.processVideo(videoFile: _capturedVideo!),
       successMessage: 'Video processed successfully!',
       errorMessage: 'Failed to process video',
       requireVideo: true,
@@ -201,7 +202,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _processDocAuth() async {
     await _executeBiometricOperation(
-      operation: _biometry!.docAuth(),
+      operationCallback: () => _biometry!.docAuth(),
       successMessage: 'Document authenticated successfully!',
       errorMessage: 'Failed to authenticate document',
     );
@@ -209,7 +210,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _faceMatch() async {
     await _executeBiometricOperation(
-      operation: _biometry!.faceMatch(),
+      operationCallback: () => _biometry!.faceMatch(),
       successMessage: 'Face match processed successfully!',
       errorMessage: 'Failed to match face',
     );
@@ -217,7 +218,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _enrollVoice() async {
     await _executeBiometricOperation(
-      operation: _biometry!.enrolVoice(videoFile: _capturedVideo!),
+      operationCallback: () =>
+          _biometry!.enrolVoice(videoFile: _capturedVideo!),
       successMessage: 'Voice enrolled successfully!',
       errorMessage: 'Failed to enroll voice',
       requireVideo: true,
@@ -226,7 +228,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _enrollFace() async {
     await _executeBiometricOperation(
-      operation: _biometry!.enrolFace(),
+      operationCallback: () => _biometry!.enrolFace(),
       successMessage: 'Face enrolled successfully!',
       errorMessage: 'Failed to enroll face',
     );

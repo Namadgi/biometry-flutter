@@ -59,6 +59,15 @@ void main() {
       );
     });
 
+    test('int parsing drops leading zeros', () {
+      const phraseWithLeadingZero = '0123456789';
+      final parsed = int.parse(phraseWithLeadingZero);
+      final reconstructed = parsed.toString();
+
+      expect(reconstructed, isNot(equals(phraseWithLeadingZero)),
+          reason: 'Leading zero was dropped after parsing as int');
+    });
+
     test('processVideo returns success response', () async {
       // Act
       final response = await biometry.processVideo(videoFile: mockFile);

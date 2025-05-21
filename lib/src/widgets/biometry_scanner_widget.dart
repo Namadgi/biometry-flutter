@@ -58,8 +58,9 @@ class BiometryScannerWidgetState extends State<BiometryScannerWidget>
         AnimationController(vsync: this, duration: Duration(seconds: scanTime));
     _timerAnimation = Tween<double>(begin: 0, end: 1).animate(_timerController);
 
-    // Start recording and timer after a short delay.
-    Future.delayed(const Duration(seconds: 1), () {
+    // Start after the camera is ready.
+    _initializeControllerFuture.then((_) {
+      if (!mounted) return;
       _startRecordingAndDisplayPhrase();
       _timerController.forward();
     });

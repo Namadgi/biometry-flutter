@@ -1,6 +1,7 @@
 import 'dart:convert'; // for jsonEncode
 import 'dart:developer' as dev;
 import 'dart:io';
+import 'dart:math';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:device_info_plus/device_info_plus.dart';
@@ -51,9 +52,9 @@ class Biometry {
 
     final http.Client httpClient = client ?? http.Client();
     String id = await _fetchSessionId(token, httpClient, fullName);
-    Biometry._phrase = int.parse(
-      (List.generate(10, (i) => i)..shuffle()).join(),
-    );
+    final rand = Random.secure();
+    final digits = List<int>.generate(10, (i) => i)..shuffle(rand);
+    Biometry._phrase = int.parse(digits.join());
 
     debugPrint("Phrase: $_phrase");
     return Biometry._(token, httpClient, id, fullName);
@@ -314,13 +315,17 @@ class Biometry {
     var docFile = await scanDocument();
     debugPrint("docFile: $docFile");
 
+    if (docFile.isEmpty) {
+      throw Exception('Document scan failed: No document file path received');
+    }
+
     final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
       ..headers['X-User-Fullname'] = _fullName
       ..files.add(await http.MultipartFile.fromPath(
         'document',
         docFile,
-        contentType: MediaType('application', 'png'),
+        contentType: MediaType('image', 'png'),
       ))
       ..headers['X-Session-ID'] = sessionId;
 
@@ -574,25 +579,69 @@ class Biometry {
   }
 
   Future<void> _processFaceImage(http.Response response) async {
-    final jsonResponse = jsonDecode(utf8.decode(response.bodyBytes));
-    // Extract the base64 string. Adjust keys if necessary.
-    final faceImageBase64 = jsonResponse['data']['face_image_base64'] as String;
-    dev.log('Face image base64: $faceImageBase64');
-    // Decode the base64 string into bytes.
-    final imageBytes = base64Decode(faceImageBase64);
+    try {
+      final jsonResponse = jsonDecode(utf8.decode(response.bodyBytes));
 
-    // Get a directory to save the file (using path_provider).
-    final directory = await getApplicationDocumentsDirectory();
-    // Create a unique file name or static name if you prefer.
-    final filePath =
-        '${directory.path}/face_match_${DateTime.now().millisecondsSinceEpoch}.png';
+      if (jsonResponse is! Map<String, dynamic> ||
+          !jsonResponse.containsKey('data')) {
+        dev.log('Error: Invalid JSON response - missing or invalid "data" key');
+        return;
+      }
 
-    // Write the bytes to the file.
-    final imageFile = File(filePath);
-    await imageFile.writeAsBytes(imageBytes);
+      final data = jsonResponse['data'] as Map<String, dynamic>;
+      if (!data.containsKey('face_image_base64') ||
+          data['face_image_base64'] is! String) {
+        dev.log('Error: Missing or invalid "face_image_base64" key');
+        return;
+      }
 
-    _faceImagePath = filePath;
+      final faceImageBase64 = data['face_image_base64'] as String;
 
-    dev.log('Face image saved to: $filePath');
+      if (!_isValidBase64(faceImageBase64)) {
+        dev.log('Error: Invalid base64 string format');
+        return;
+      }
+
+      dev.log('Face image base64: $faceImageBase64');
+
+      final imageBytes = base64Decode(faceImageBase64);
+
+      final directory = await getApplicationDocumentsDirectory();
+      final filePath =
+          '${directory.path}/face_match_${DateTime.now().millisecondsSinceEpoch}.png';
+
+      final imageFile = File(filePath);
+      await imageFile.writeAsBytes(imageBytes);
+
+      _faceImagePath = filePath;
+
+      dev.log('Face image saved to: $filePath');
+    } catch (e, stackTrace) {
+      dev.log('Error processing face image: $e',
+          error: e, stackTrace: stackTrace);
+      return;
+    }
+  }
+
+  bool _isValidBase64(String str) {
+    if (str.isEmpty) return false;
+
+    final base64Pattern = RegExp(r'^[A-Za-z0-9+/=]+$');
+    if (!base64Pattern.hasMatch(str)) return false;
+
+    if (str.length % 4 != 0) return false;
+
+    if (str.contains('=')) {
+      if (!str.endsWith('=') && !str.endsWith('==')) return false;
+      final paddingStart = str.indexOf('=');
+      if (str.substring(paddingStart).contains(RegExp(r'[^=]'))) return false;
+    }
+
+    try {
+      base64Decode(str);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 }
