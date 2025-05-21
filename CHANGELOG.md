@@ -1,3 +1,20 @@
+## [1.0.1] - 2025-05-21
+
+### Added
+- Enhanced example app with updated UI, session management, and integrated biometric actions.
+- Added face and voice enrollment
+
+### Changed
+- Updated documentation for setup, security, and contribution guidelines.
+- Refactor biometric scanning widget
+- Refactor biometry logic
+- Upgraded to Dart 3 and Flutter 3.29.0 with new dependencies for audio, camera, and video processing.
+
+### Fixed
+- Improved error handling and metadata collection for better cross-platform support.
+
+### Tests
+- Added widget and integration tests for biometric features.
 
 ## [1.0.0] - 2024-03-23
 
