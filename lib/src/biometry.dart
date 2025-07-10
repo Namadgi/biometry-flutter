@@ -139,17 +139,32 @@ class Biometry {
   /// Throws:
   /// - `PlatformException` if the scanning process fails.
   Future<String> scanDocument() async {
-    // By default they fetch PDF for Android and PNG for iOS.
     dynamic scannedDocuments;
     try {
       scannedDocuments =
           await FlutterDocScanner().getScannedDocumentAsImages(page: 1) ??
               'Unknown platform documents';
-    } on PlatformException {
+    } on PlatformException catch (e) {
       scannedDocuments = 'Failed to get scanned documents.';
     }
-    if (scannedDocuments is List) {
+    // ios: scannedDocuments is a list of file paths
+    if (scannedDocuments is List && scannedDocuments.isNotEmpty) {
       return scannedDocuments[0];
+    }
+    // android: scannedDocuments is a map with a string value for 'uri'
+    if (scannedDocuments is Map && scannedDocuments.containsKey('Uri')) {
+      final uriString = scannedDocuments['Uri'];
+      if (uriString is String) {
+        final uriMatch = RegExp(r'imageUri=([^}]+)').firstMatch(uriString);
+        if (uriMatch != null) {
+          final fileUri = uriMatch.group(1);
+          return fileUri ?? "";
+        } else {
+          debugPrint("Regex did not match in uriString: $uriString");
+        }
+      } else {
+        debugPrint("uriString is not a String: $uriString");
+      }
     }
     return "";
   }
@@ -314,6 +329,7 @@ class Biometry {
     final uri = Uri.parse('$_apiGateway/docauth/check');
     var docFile = await scanDocument();
     debugPrint("docFile: $docFile");
+    final filePath = _stripFileUriPrefix(docFile);
 
     if (docFile.isEmpty) {
       throw Exception('Document scan failed: No document file path received');
@@ -324,7 +340,7 @@ class Biometry {
       ..headers['X-User-Fullname'] = _fullName
       ..files.add(await http.MultipartFile.fromPath(
         'document',
-        docFile,
+        filePath,
         contentType: MediaType('image', 'png'),
       ))
       ..headers['X-Session-ID'] = sessionId;
@@ -643,5 +659,12 @@ class Biometry {
     } catch (e) {
       return false;
     }
+  }
+
+  String _stripFileUriPrefix(String uri) {
+    if (uri.startsWith('file://')) {
+      return uri.replaceFirst('file://', '');
+    }
+    return uri;
   }
 }
