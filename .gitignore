@@ -27,4 +27,7 @@ migrate_working_dir/
 **/doc/api/
 .dart_tool/
 build/
-example/.flutter-plugins
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.melos_tool

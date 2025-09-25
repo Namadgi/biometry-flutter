@@ -28,7 +28,7 @@ class Biometry {
   static const String _consentUrl = '$_host/api-consent';
   static int _phrase = 0;
 
-  // A generate a random number from 1234567 to 9876543.
+  // Generate a 7-digit number; first digit 1–9 to avoid leading zero.
 
   final String _token;
   final http.Client _client;
@@ -55,8 +55,9 @@ class Biometry {
     final http.Client httpClient = client ?? http.Client();
     String id = await _fetchSessionId(token, httpClient, fullName);
     final rand = Random.secure();
-    final digits = List<int>.generate(7, (i) => i)..shuffle(rand);
-    Biometry._phrase = int.parse(digits.join());
+    final first = rand.nextInt(9) + 1; // 1..9
+    final rest = List<int>.generate(6, (_) => rand.nextInt(10));
+    Biometry._phrase = int.parse('$first${rest.join()}');
 
     debugPrint("Phrase: $_phrase");
     return Biometry._(token, httpClient, id, fullName);
@@ -97,11 +98,15 @@ class Biometry {
 
     final response = await client.send(request);
     final responseBody = await http.Response.fromStream(response);
-    debugPrint("Response from API: ${responseBody.body}");
+    if (kDebugMode) {
+      debugPrint("Response from API: ${responseBody.body}");
+    }
     if (response.statusCode == 200) {
       final jsonResponse = jsonDecode(responseBody.body);
       String data = jsonResponse['data'] ?? '';
-      debugPrint("Data: $data");
+      if (kDebugMode) {
+        debugPrint("Data: $data");
+      }
       return data;
     } else {
       throw Exception('Failed to retrieve session ID: ${responseBody.body}');
@@ -473,9 +478,14 @@ class Biometry {
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
-    debugPrint('Process Video Response Status: ${response.statusCode}');
-    debugPrint('Process Video Response Headers: ${response.headers}');
-    debugPrint('Process Video Response Body: ${response.body}');
+    if (kDebugMode) {
+      final redactedHeaders = Map.of(response.headers)
+        ..update('authorization', (_) => 'REDACTED',
+            ifAbsent: () => 'REDACTED');
+      debugPrint('Process Video Response Status: ${response.statusCode}');
+      debugPrint('Process Video Response Headers: $redactedHeaders');
+      debugPrint('Process Video Response Body: ${response.body}');
+    }
 
     return response;
   }
