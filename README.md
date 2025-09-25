@@ -108,6 +108,8 @@ BiometryScannerWidget(
 );
 ```
 
+**Note**: If both consent and storage consent have been given before calling `processVideo()`, the backend will automatically perform enrollment (both face and voice) during video processing. Otherwise, it performs authentication only. When automatic enrollment is triggered, the response will include the `x-auto-enroll` header to indicate that enrollment has started (enrollment is asynchronous).
+
 ### Document Authentication
 
 ```dart

@@ -1,3 +1,18 @@
+## [1.0.3] - 2025-09-25
+
+### Added
+- Support for automatic enrollment when both consent and storage consent are given before `processVideo()`
+- Enhanced logging for `processVideo()` response including status, headers, and body
+- Documentation for new automatic enrollment behavior
+
+### Changed
+- Reduced phrase length from 10 digits to 7 digits for better user experience
+- Updated documentation to explain automatic enrollment feature
+- Enhanced `processVideo()` method documentation
+
+### Fixed
+- Improved response logging for better debugging and monitoring
+
 ## [1.0.2] - 2025-05-21
 
 ### Changed

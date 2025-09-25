@@ -19,14 +19,16 @@ import 'package:uuid/uuid.dart';
 ///   - [initialize] - Initializes the Biometry class with a token, full name and an optional HTTP client.
 ///   - [scanDocument] - Scans a document using the flutter_doc_scanner plugin.
 ///   - [docAuth] - Processes a document using the biometry service.
-///   - [processVideo] - Processes a video file using the biometry service.
+///   - [processVideo] - Processes a video file using the biometry service. If both consents are given, automatically performs enrollment.
+///   - [enrolFace] - Enrolls a face using the biometry service (required if consents not given).
+///   - [enrolVoice] - Enrolls voice using the biometry service (required if consents not given).
 class Biometry {
   static const String _host = 'https://api.biometrysolutions.com';
   static const String _apiGateway = '$_host/api-gateway';
   static const String _consentUrl = '$_host/api-consent';
   static int _phrase = 0;
 
-  // A generate a random number from 1234567890 to 9876543210.
+  // Generate a 7-digit number; first digit 1–9 to avoid leading zero.
 
   final String _token;
   final http.Client _client;
@@ -53,8 +55,9 @@ class Biometry {
     final http.Client httpClient = client ?? http.Client();
     String id = await _fetchSessionId(token, httpClient, fullName);
     final rand = Random.secure();
-    final digits = List<int>.generate(10, (i) => i)..shuffle(rand);
-    Biometry._phrase = int.parse(digits.join());
+    final first = rand.nextInt(9) + 1; // 1..9
+    final rest = List<int>.generate(6, (_) => rand.nextInt(10));
+    Biometry._phrase = int.parse('$first${rest.join()}');
 
     debugPrint("Phrase: $_phrase");
     return Biometry._(token, httpClient, id, fullName);
@@ -95,11 +98,15 @@ class Biometry {
 
     final response = await client.send(request);
     final responseBody = await http.Response.fromStream(response);
-    debugPrint("Response from API: ${responseBody.body}");
+    if (kDebugMode) {
+      debugPrint("Response from API: ${responseBody.body}");
+    }
     if (response.statusCode == 200) {
       final jsonResponse = jsonDecode(responseBody.body);
       String data = jsonResponse['data'] ?? '';
-      debugPrint("Data: $data");
+      if (kDebugMode) {
+        debugPrint("Data: $data");
+      }
       return data;
     } else {
       throw Exception('Failed to retrieve session ID: ${responseBody.body}');
@@ -429,6 +436,13 @@ class Biometry {
   ///
   /// Sends a POST request to the biometry service to process the video.
   /// Detailed device information is gathered and sent in the header as a JSON string.
+  ///
+  /// If both consent and storage consent have been given, the backend will automatically
+  /// perform enrollment (both face and voice) during video processing. Otherwise, it
+  /// performs authentication only.
+  ///
+  /// When automatic enrollment is triggered, the response will include the 'X-Auto-Enroll'
+  /// header to indicate that enrollment has started (enrollment is asynchronous).
   Future<http.Response> processVideo({
     required File videoFile,
   }) async {
@@ -461,8 +475,19 @@ class Biometry {
     }
 
     request.headers['X-Device-Info'] = deviceInfoJson;
-    final response = await _client.send(request);
-    return http.Response.fromStream(response);
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (kDebugMode) {
+      final redactedHeaders = Map.of(response.headers)
+        ..update('authorization', (_) => 'REDACTED',
+            ifAbsent: () => 'REDACTED');
+      debugPrint('Process Video Response Status: ${response.statusCode}');
+      debugPrint('Process Video Response Headers: $redactedHeaders');
+      debugPrint('Process Video Response Body: ${response.body}');
+    }
+
+    return response;
   }
 
   /// Allows consent by sending a consent flag to the API.

@@ -503,6 +503,46 @@ class BiometryHomePageState extends State<BiometryHomePage>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
+                              'Consent Management',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 20,
+                              ),
+                              semanticsLabel: 'Consent Management Section',
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Consents are required for enrollment.',
+                              style: TextStyle(
+                                color: Color(0xFF9CA3AF),
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            _buildActionButton(
+                              label: 'Consent to Use Biometrics',
+                              icon: Icons.check_circle,
+                              onPressed: _allowConsent,
+                              tooltip: 'Allow use of biometric data',
+                            ),
+                            _buildActionButton(
+                              label: 'Consent to Store Biometrics',
+                              icon: Icons.storage,
+                              onPressed: _allowStorageConsent,
+                              tooltip: 'Allow storage of biometric data',
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Container(
+                        decoration: AppTheme.containerDecoration,
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
                               'Biometric Actions',
                               style: TextStyle(
                                 color: Colors.white,
@@ -547,7 +587,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
                               onPressed:
                                   _capturedVideo != null ? _processVideo : null,
                               icon: Icons.videocam,
-                              tooltip: 'Process the captured video',
+                              tooltip:
+                                  'Process the captured video (auto-enrolls if consents given)',
                             ),
                             _buildActionButton(
                               label: 'Document Auth',
@@ -585,27 +626,15 @@ class BiometryHomePageState extends State<BiometryHomePage>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'Consent Management',
+                              'Session Management',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 20,
                               ),
-                              semanticsLabel: 'Consent Management Section',
+                              semanticsLabel: 'Session Management Section',
                             ),
                             const SizedBox(height: 16),
-                            _buildActionButton(
-                              label: 'Consent to Use Biometrics',
-                              icon: Icons.check_circle,
-                              onPressed: _allowConsent,
-                              tooltip: 'Allow use of biometric data',
-                            ),
-                            _buildActionButton(
-                              label: 'Consent to Store Biometrics',
-                              icon: Icons.storage,
-                              onPressed: _allowStorageConsent,
-                              tooltip: 'Allow storage of biometric data',
-                            ),
                             _buildActionButton(
                               label: 'End Session',
                               icon: Icons.stop,
