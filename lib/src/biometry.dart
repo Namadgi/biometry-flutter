@@ -55,9 +55,10 @@ class Biometry {
     final http.Client httpClient = client ?? http.Client();
     String id = await _fetchSessionId(token, httpClient, fullName);
     final rand = Random.secure();
-    final first = rand.nextInt(9) + 1; // 1..9
-    final rest = List<int>.generate(6, (_) => rand.nextInt(10));
-    Biometry._phrase = int.parse('$first${rest.join()}');
+
+    // Generate a 7-digit phrase with unique digits using only digits 1-7
+    final digits = [1, 2, 3, 4, 5, 6, 7]..shuffle(rand);
+    Biometry._phrase = int.parse(digits.join());
 
     debugPrint("Phrase: $_phrase");
     return Biometry._(token, httpClient, id, fullName);
