@@ -28,7 +28,7 @@ class Biometry {
   static const String _consentUrl = '$_host/api-consent';
   static int _phrase = 0;
 
-  // Generate a 7-digit number; first digit 1–9 to avoid leading zero.
+  // Generate a 7-digit number with unique digits from 1-9.
 
   final String _token;
   final http.Client _client;
@@ -56,8 +56,8 @@ class Biometry {
     String id = await _fetchSessionId(token, httpClient, fullName);
     final rand = Random.secure();
 
-    // Generate a 7-digit phrase with unique digits using only digits 1-7
-    final digits = [1, 2, 3, 4, 5, 6, 7]..shuffle(rand);
+    final allDigits = [1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
+    final digits = allDigits.take(7).toList();
     Biometry._phrase = int.parse(digits.join());
 
     debugPrint("Phrase: $_phrase");
