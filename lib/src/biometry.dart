@@ -26,9 +26,9 @@ class Biometry {
   static const String _host = 'https://api.biometrysolutions.com';
   static const String _apiGateway = '$_host/api-gateway';
   static const String _consentUrl = '$_host/api-consent';
-  static int _phrase = 0;
+  static String _phrase = '';
 
-  // Generate a 7-digit number with unique digits from 1-9.
+  // Generate a 7-digit number with unique digits from 0-9.
 
   final String _token;
   final http.Client _client;
@@ -56,9 +56,9 @@ class Biometry {
     String id = await _fetchSessionId(token, httpClient, fullName);
     final rand = Random.secure();
 
-    final allDigits = [1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
+    final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
     final digits = allDigits.take(7).toList();
-    Biometry._phrase = int.parse(digits.join());
+    Biometry._phrase = digits.join();
 
     debugPrint("Phrase: $_phrase");
     return Biometry._(token, httpClient, id, fullName);
@@ -164,7 +164,7 @@ class Biometry {
 
   /// Returns the phrase as a string of words.
   String get phraseWords {
-    return _phrase.toString().split('').map((e) {
+    return _phrase.split('').map((e) {
       switch (e) {
         case '0':
           return 'Zero';
@@ -194,7 +194,7 @@ class Biometry {
 
   /// Returns the phrase as a string of integers.
   String get phraseAsIntList {
-    return _phrase.toString().split('').join(', ');
+    return _phrase.split('').join(', ');
   }
 
   /// Enrolls a face using the biometry service.
