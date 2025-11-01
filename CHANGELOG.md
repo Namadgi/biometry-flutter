@@ -1,3 +1,22 @@
+## [1.0.4] - 2025-10-31
+
+### Added
+- Example app UX improvements: animated results panel, progress/loading states, and clearer form validation and error messages.
+- Additional inline docs and debug logs to help integrate and troubleshoot `Biometry.initialize` and video processing flows.
+- New API: `Biometry.resetPhrase()` to regenerate the 7-digit verification phrase (unique digits) at any time, using the same logic as during initialization.
+
+### Changed
+- Polished example app UI and state management for initialization and processing flows.
+- Updated iOS example project settings to target iOS 13+ consistently and set `PERMISSION_CAMERA=1` in Pod build settings.
+- Refreshed README badges, links, and setup instructions; clarified automatic enrollment notes around `processVideo()`.
+- Minor metadata updates in `pubspec.yaml`.
+
+### Fixed
+- Minor typos and formatting across README and in-code comments.
+- Improved example tests and minor adjustments in `example/test/widget_test.dart`.
+
+Note: No breaking API changes; library API remains backward-compatible.
+
 ## [1.0.3] - 2025-09-25
 
 ### Added

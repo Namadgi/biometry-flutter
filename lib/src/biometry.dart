@@ -12,7 +12,6 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:recase/recase.dart';
-
 import 'package:uuid/uuid.dart';
 
 /// A class to handle biometry-related operations.
@@ -68,6 +67,16 @@ class Biometry {
   static void dispose() {
     // Dispose of any resources if needed.
     // For example, if you have a camera controller, you might want to dispose of it here.
+  }
+
+  /// Resets the internal phrase to a new random 7-digit sequence with unique digits (0-9).
+  /// Uses the same generation logic as during initialization.
+  static void resetPhrase() {
+    final rand = Random.secure();
+    final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
+    final digits = allDigits.take(7).toList();
+    _phrase = digits.join();
+    debugPrint("Phrase: $_phrase");
   }
 
   static Future<void> _configureAudioSession() async {

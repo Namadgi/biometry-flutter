@@ -1,30 +1,31 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
+import 'package:biometry_example/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:biometry_example/main.dart';
-
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  testWidgets('Example app initial UI and validation smoke test',
+      (WidgetTester tester) async {
+    // Build the app and trigger a frame.
     await tester.pumpWidget(const BiometryApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Verify key elements of the initial UI are present.
+    expect(
+        find.text('Biometric Authentication'), findsOneWidget); // AppBar title
+    expect(find.text('Initialize Session'), findsOneWidget); // Section header
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Verify form fields by their labels.
+    expect(find.widgetWithText(TextFormField, 'Token'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, 'Full Name'), findsOneWidget);
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Verify the primary initialize button exists.
+    final initButton = find.text('Initialize Biometry');
+    expect(initButton, findsOneWidget);
+
+    // Tap initialize without inputs to trigger validation snackbar for token.
+    await tester.tap(initButton);
+    await tester.pumpAndSettle();
+
+    // Expect the snackbar with the validation message.
+    expect(find.text('Please enter a valid token.'), findsOneWidget);
   });
 }

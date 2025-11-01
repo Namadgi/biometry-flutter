@@ -273,7 +273,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
                     color: AppTheme.accentColor,
                     fontWeight: FontWeight.bold,
                   ),
-                  semanticsLabel: 'Numbers to speak: ${phrase}',
+                  semanticsLabel: 'Numbers to speak: $phrase',
                 ),
                 const Spacer(),
               ],
