@@ -36,7 +36,7 @@ class Biometry {
   final String sessionId;
 
   /// The full name of the user, stored for subsequent API calls.
-  String _fullName;
+  final String _fullName;
 
   /// The path to the image of the person.
   String? _faceImagePath;
@@ -161,7 +161,7 @@ class Biometry {
       scannedDocuments =
           await FlutterDocScanner().getScannedDocumentAsImages(page: 1) ??
               'Unknown platform documents';
-    } on PlatformException catch (e) {
+    } on PlatformException catch (_) {
       scannedDocuments = 'Failed to get scanned documents.';
     }
     // ios: scannedDocuments is a list of file paths
