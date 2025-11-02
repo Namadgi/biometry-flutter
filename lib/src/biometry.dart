@@ -12,7 +12,6 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:recase/recase.dart';
-
 import 'package:uuid/uuid.dart';
 
 /// A class to handle biometry-related operations.
@@ -37,7 +36,7 @@ class Biometry {
   final String sessionId;
 
   /// The full name of the user, stored for subsequent API calls.
-  String _fullName;
+  final String _fullName;
 
   /// The path to the image of the person.
   String? _faceImagePath;
@@ -68,6 +67,16 @@ class Biometry {
   static void dispose() {
     // Dispose of any resources if needed.
     // For example, if you have a camera controller, you might want to dispose of it here.
+  }
+
+  /// Resets the internal phrase to a new random 7-digit sequence with unique digits (0-9).
+  /// Uses the same generation logic as during initialization.
+  static void resetPhrase() {
+    final rand = Random.secure();
+    final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
+    final digits = allDigits.take(7).toList();
+    _phrase = digits.join();
+    debugPrint("Phrase: $_phrase");
   }
 
   static Future<void> _configureAudioSession() async {
@@ -147,17 +156,32 @@ class Biometry {
   /// Throws:
   /// - `PlatformException` if the scanning process fails.
   Future<String> scanDocument() async {
-    // By default they fetch PDF for Android and PNG for iOS.
     dynamic scannedDocuments;
     try {
       scannedDocuments =
           await FlutterDocScanner().getScannedDocumentAsImages(page: 1) ??
               'Unknown platform documents';
-    } on PlatformException {
+    } on PlatformException catch (_) {
       scannedDocuments = 'Failed to get scanned documents.';
     }
-    if (scannedDocuments is List) {
+    // ios: scannedDocuments is a list of file paths
+    if (scannedDocuments is List && scannedDocuments.isNotEmpty) {
       return scannedDocuments[0];
+    }
+    // android: scannedDocuments is a map with a string value for 'uri'
+    if (scannedDocuments is Map && scannedDocuments.containsKey('Uri')) {
+      final uriString = scannedDocuments['Uri'];
+      if (uriString is String) {
+        final uriMatch = RegExp(r'imageUri=([^}]+)').firstMatch(uriString);
+        if (uriMatch != null) {
+          final fileUri = uriMatch.group(1);
+          return fileUri ?? "";
+        } else {
+          debugPrint("Regex did not match in uriString: $uriString");
+        }
+      } else {
+        debugPrint("uriString is not a String: $uriString");
+      }
     }
     return "";
   }
@@ -322,6 +346,7 @@ class Biometry {
     final uri = Uri.parse('$_apiGateway/docauth/check');
     var docFile = await scanDocument();
     debugPrint("docFile: $docFile");
+    final filePath = _stripFileUriPrefix(docFile);
 
     if (docFile.isEmpty) {
       throw Exception('Document scan failed: No document file path received');
@@ -332,7 +357,7 @@ class Biometry {
       ..headers['X-User-Fullname'] = _fullName
       ..files.add(await http.MultipartFile.fromPath(
         'document',
-        docFile,
+        filePath,
         contentType: MediaType('image', 'png'),
       ))
       ..headers['X-Session-ID'] = sessionId;
@@ -669,5 +694,12 @@ class Biometry {
     } catch (e) {
       return false;
     }
+  }
+
+  String _stripFileUriPrefix(String uri) {
+    if (uri.startsWith('file://')) {
+      return uri.replaceFirst('file://', '');
+    }
+    return uri;
   }
 }

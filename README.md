@@ -28,7 +28,7 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  biometry: ^1.0.3
+  biometry: ^1.0.4
 ```
 
 Run:
