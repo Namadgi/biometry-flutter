@@ -1,3 +1,17 @@
+## [1.0.5] - 2025-11-24
+
+### Added
+- Persistent face image storage across sessions: face images from successful document authentication are saved locally and automatically loaded in subsequent sessions.
+- Static methods for managing persistent face images: `getPersistentFaceImagePath()`, `hasPersistentFaceImage()`, and `deletePersistentFaceImage()`.
+- `loadPersistentFaceImage` parameter in `Biometry.initialize()` (defaults to `true`).
+
+### Changed
+- `docAuth()` saves face images persistently when validation passes successfully.
+- `initialize()` automatically loads persistent face images if available.
+- `faceMatch()` automatically attempts to load persistent face images when needed.
+
+Note: No breaking API changes; library API remains backward-compatible.
+
 ## [1.0.4] - 2025-10-31
 
 ### Added

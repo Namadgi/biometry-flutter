@@ -36,7 +36,7 @@ class Biometry {
   final String sessionId;
 
   /// The full name of the user, stored for subsequent API calls.
-  final String _fullName;
+  String _fullName;
 
   /// The path to the image of the person.
   String? _faceImagePath;
@@ -48,6 +48,7 @@ class Biometry {
     required String token,
     required String fullName,
     http.Client? client,
+    bool loadPersistentFaceImage = true,
   }) async {
     await _configureAudioSession();
 
@@ -60,7 +61,17 @@ class Biometry {
     Biometry._phrase = digits.join();
 
     debugPrint("Phrase: $_phrase");
-    return Biometry._(token, httpClient, id, fullName);
+
+    final biometry = Biometry._(token, httpClient, id, fullName);
+
+    if (loadPersistentFaceImage) {
+      final persistentPath = await getPersistentFaceImagePath(fullName);
+      if (persistentPath != null) {
+        biometry._faceImagePath = persistentPath;
+      }
+    }
+
+    return biometry;
   }
 
   /// Disposes the Biometry class.
@@ -96,6 +107,39 @@ class Biometry {
 
   /// Return the face path captured by docAuth
   String? get faceImagePath => _faceImagePath;
+
+  static Future<String?> getPersistentFaceImagePath(String fullName) async {
+    final directory = await getApplicationDocumentsDirectory();
+    final filePath =
+        _getPersistentFaceImagePathForUser(directory.path, fullName);
+    final file = File(filePath);
+    if (await file.exists()) {
+      return filePath;
+    }
+    return null;
+  }
+
+  static Future<bool> hasPersistentFaceImage(String fullName) async {
+    final path = await getPersistentFaceImagePath(fullName);
+    return path != null;
+  }
+
+  static Future<void> deletePersistentFaceImage(String fullName) async {
+    final path = await getPersistentFaceImagePath(fullName);
+    if (path != null) {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+        dev.log('Deleted persistent face image: $path');
+      }
+    }
+  }
+
+  static String _getPersistentFaceImagePathForUser(
+      String directoryPath, String fullName) {
+    final fileName = 'doc_auth_face_${fullName.hashCode.abs()}.png';
+    return '$directoryPath/$fileName';
+  }
 
   /// Fetches a new session ID from the API.
   static Future<String> _fetchSessionId(
@@ -161,7 +205,7 @@ class Biometry {
       scannedDocuments =
           await FlutterDocScanner().getScannedDocumentAsImages(page: 1) ??
               'Unknown platform documents';
-    } on PlatformException catch (_) {
+    } on PlatformException {
       scannedDocuments = 'Failed to get scanned documents.';
     }
     // ios: scannedDocuments is a list of file paths
@@ -382,13 +426,24 @@ class Biometry {
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
-    // Process the face image from the response.
-    await _processFaceImage(response);
-
-    // Optional: Check the response status code.
+    // Check response status code first
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
           'DocAuth failed with status code: ${response.statusCode}');
+    }
+
+    final jsonResponse = jsonDecode(utf8.decode(response.bodyBytes));
+    final data = jsonResponse is Map<String, dynamic>
+        ? jsonResponse['data'] as Map<String, dynamic>?
+        : null;
+
+    final currentResult = data?['current_result'] as String?;
+    final docAuthPassed = currentResult == 'Pass';
+
+    await _processFaceImage(response);
+
+    if (docAuthPassed && data != null) {
+      await _saveFaceImagePersistently(data);
     }
 
     return response;
@@ -401,9 +456,14 @@ class Biometry {
   /// Throws an `Exception` if the request fails.
   /// Developer docs: https://developer.biometrysolutions.com/concepts/face-match/
   Future<http.Response> faceMatch() async {
-    // Check if the image path is provided.
     if (_faceImagePath == null) {
-      throw Exception('No face image path provided');
+      final persistentPath = await getPersistentFaceImagePath(_fullName);
+      if (persistentPath != null) {
+        _faceImagePath = persistentPath;
+      } else {
+        throw Exception(
+            'No face image path provided and no persistent face image found. Please perform docAuth first.');
+      }
     }
 
     final uri = Uri.parse('$_apiGateway/match-faces');
@@ -671,6 +731,34 @@ class Biometry {
       dev.log('Error processing face image: $e',
           error: e, stackTrace: stackTrace);
       return;
+    }
+  }
+
+  Future<void> _saveFaceImagePersistently(Map<String, dynamic> data) async {
+    try {
+      final faceImageBase64 = data['face_image_base64'] as String?;
+      if (faceImageBase64 == null || faceImageBase64.isEmpty) {
+        dev.log('Error: Missing or empty "face_image_base64"');
+        return;
+      }
+
+      if (!_isValidBase64(faceImageBase64)) {
+        dev.log('Error: Invalid base64 string format');
+        return;
+      }
+
+      final imageBytes = base64Decode(faceImageBase64);
+      final directory = await getApplicationDocumentsDirectory();
+      final filePath =
+          _getPersistentFaceImagePathForUser(directory.path, _fullName);
+
+      final imageFile = File(filePath);
+      await imageFile.writeAsBytes(imageBytes);
+
+      _faceImagePath = filePath;
+    } catch (e, stackTrace) {
+      dev.log('Error saving persistent face image: $e',
+          error: e, stackTrace: stackTrace);
     }
   }
 
