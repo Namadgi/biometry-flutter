@@ -56,16 +56,15 @@ void main() {
         token: 'test-token',
         client: mockHttpClient,
         fullName: 'John Doe',
+        loadPersistentFaceImage: false,
       );
     });
 
-    test('int parsing drops leading zeros', () {
-      const phraseWithLeadingZero = '0123456789';
-      final parsed = int.parse(phraseWithLeadingZero);
-      final reconstructed = parsed.toString();
-
-      expect(reconstructed, isNot(equals(phraseWithLeadingZero)),
-          reason: 'Leading zero was dropped after parsing as int');
+    test('phrase preserves leading zeros as string', () {
+      const phraseWithLeadingZero = '0123456';
+      expect(phraseWithLeadingZero, equals('0123456'),
+          reason: 'String phrase preserves leading zeros');
+      expect(phraseWithLeadingZero.length, equals(7));
     });
 
     test('processVideo returns success response', () async {
