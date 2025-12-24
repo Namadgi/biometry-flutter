@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:io';
 
 import 'package:biometry/biometry.dart';
 import 'package:biometry/biometry_scanner_widget.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
 
 // theme constants
 class AppTheme {
@@ -80,6 +83,125 @@ class BiometryHomePageState extends State<BiometryHomePage>
     super.dispose();
   }
 
+  /// Performs reverse geocoding to get city and country from coordinates.
+  /// Returns a map with 'city' and 'country' keys, or empty map on failure.
+  Future<Map<String, String>> _reverseGeocode(
+    double latitude,
+    double longitude,
+  ) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse?format=json&lat=$latitude&lon=$longitude&zoom=10&addressdetails=1',
+        ),
+        headers: {'User-Agent': 'BiometryFlutterExample/1.0'},
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        return {};
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final address = data['address'] as Map<String, dynamic>?;
+
+      if (address == null) {
+        return {};
+      }
+
+      final country = address['country_code']?.toString().toUpperCase() ??
+          address['ISO3166-1:alpha2']?.toString().toUpperCase() ??
+          address['country']?.toString();
+
+      final city = _extractCity(address);
+
+      return {
+        if (country != null) 'country': country,
+        if (city != null) 'city': city,
+      };
+    } catch (e) {
+      return {};
+    }
+  }
+
+  /// Extracts city name from address data, trying multiple field names.
+  String? _extractCity(Map<String, dynamic> address) {
+    const cityFields = [
+      'city',
+      'town',
+      'village',
+      'municipality',
+      'suburb',
+      'neighbourhood',
+      'county',
+      'state_district',
+      'state',
+    ];
+
+    for (final field in cityFields) {
+      final value = address[field]?.toString();
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  /// Checks and requests location permission if needed.
+  /// Returns true if permission is granted (whileInUse or always), false otherwise.
+  Future<bool> _checkAndRequestPermission() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        return false;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      return false;
+    }
+
+    return permission == LocationPermission.whileInUse ||
+        permission == LocationPermission.always;
+  }
+
+  /// Gets the current device location and returns a BiometryGeoLocation object.
+  /// Returns null if location permission is denied or location cannot be determined.
+  Future<BiometryGeoLocation?> _getCurrentLocation() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return null;
+      }
+
+      if (!await _checkAndRequestPermission()) {
+        return null;
+      }
+
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 15),
+      );
+
+      final locationInfo = await _reverseGeocode(
+        position.latitude,
+        position.longitude,
+      );
+      final country = locationInfo['country'] ?? 'Unknown';
+      final city = locationInfo['city'] ?? 'Unknown';
+
+      return BiometryGeoLocation(
+        lat: position.latitude,
+        lng: position.longitude,
+        country: country,
+        city: city,
+      );
+    } catch (e) {
+      return null;
+    }
+  }
+
   Future<void> _initializeBiometry() async {
     final token = _tokenController.text.trim();
     if (token.isEmpty) {
@@ -92,11 +214,22 @@ class BiometryHomePageState extends State<BiometryHomePage>
       return;
     }
     try {
-      _biometry = await Biometry.initialize(token: token, fullName: fullName);
+      // Get current device location
+      final geoLocation = await _getCurrentLocation();
+
+      _biometry = await Biometry.initialize(
+        token: token,
+        fullName: fullName,
+        geoLocation: geoLocation,
+      );
       setState(() {
         _isBiometryInitialized = true;
       });
-      _showSnackBar('Biometry initialized successfully!');
+
+      final message = geoLocation != null
+          ? 'Biometry initialized with location: ${geoLocation.city}, ${geoLocation.country}'
+          : 'Biometry initialized successfully';
+      _showSnackBar(message);
     } catch (e) {
       _showSnackBar('Failed to initialize Biometry: $e');
     }

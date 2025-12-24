@@ -6,6 +6,8 @@
   <string>This app requires camera access for biometric authentication.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>This app requires microphone access for biometric authentication.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>This app requires location access to include geolocation information in biometric transactions.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

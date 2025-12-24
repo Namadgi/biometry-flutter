@@ -1,6 +1,6 @@
 name: biometry
 description: A Flutter package for integrating with the Biometry API to provide biometric authentication and verification services.
-version: 1.0.4
+version: 1.0.5
 homepage: https://biometrysolutions.com
 
 environment:
