@@ -746,22 +746,24 @@ class Biometry {
   }
 }
 
+/// Represents geolocation information for biometry transactions.
 class BiometryGeoLocation {
+  /// Latitude coordinate.
   final double lat;
 
+  /// Longitude coordinate.
   final double lng;
 
+  /// Country name or code.
   final String country;
 
+  /// City name.
   final String city;
 
+  /// Optional client IP address.
   final String? ip;
 
   /// Creates a new [BiometryGeoLocation] instance.
-  ///
-  /// [lat] and [lng] are required coordinates.
-  /// [country] and [city] are required location identifiers.
-  /// [ip] is optional - if not provided, the request IP will be used automatically.
   BiometryGeoLocation({
     required this.lat,
     required this.lng,
@@ -770,6 +772,7 @@ class BiometryGeoLocation {
     this.ip,
   });
 
+  /// Converts the geolocation information to a JSON map.
   Map<String, dynamic> toJson() {
     return {
       'lat': lat,
