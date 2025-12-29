@@ -1,3 +1,24 @@
+## [1.0.5] - 2025-12-24
+
+### Added
+- Support for optional geolocation information in all transactions via the `X-Geo-Location` header
+- New `BiometryGeoLocation` class to represent latitude, longitude, country, city, and optional IP address
+- `geoLocation` parameter in `Biometry.initialize()` to set geolocation during initialization
+- `setGeoLocation()` method to update geolocation information at any time
+- Example app now includes automatic device location detection with reverse geocoding
+
+### Changed
+- Centralized header management using `_addCommonHeaders()` internal method
+- Refactored all API methods to consistently include device telemetry and geolocation headers
+- Example app uses `LocationAccuracy.medium` with 15-second timeout for better battery efficiency
+
+### Technical Details
+- Geolocation data is included in all API requests when provided
+- If geolocation is not provided, the API falls back to IP-based lookup (existing behavior)
+- Example app includes permission handling and reverse geocoding using OpenStreetMap Nominatim API
+
+Note: No breaking API changes; library API remains backward-compatible.
+
 ## [1.0.4] - 2025-10-31
 
 ### Added
