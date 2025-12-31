@@ -121,7 +121,7 @@ class Biometry {
     String fullName, {
     BiometryGeoLocation? geoLocation,
   }) async {
-    final uri = Uri.parse('$_apiGateway/sessions/start');
+    final uri = Uri.parse('$_apiGateway/sessions/start?warmup=true');
 
     final request = http.Request('POST', uri)
       ..headers['Authorization'] = 'Bearer $token'

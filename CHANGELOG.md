@@ -1,3 +1,10 @@
+## [1.0.6] - 2025-12-31
+
+### Changed
+- Session warmup is now enabled by default by calling `sessions/start?warmup=true` to reduce first-call latency.
+- Updated example assets and tests to reflect the warmup-enabled session initialization flow.
+
+
 ## [1.0.5] - 2025-12-24
 
 ### Added
