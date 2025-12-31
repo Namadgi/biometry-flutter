@@ -32,7 +32,7 @@ void main() {
         final url = request.url.toString();
 
         if (url ==
-            'https://api.biometrysolutions.com/api-gateway/sessions/start') {
+            'https://api.biometrysolutions.com/api-gateway/sessions/start?warmup=false') {
           // This is called by Biometry.initialize to fetch a session ID
           return http.StreamedResponse(
             Stream.fromIterable(['{"data":"session-id-123"}'.codeUnits]),
