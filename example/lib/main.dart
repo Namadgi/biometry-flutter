@@ -308,6 +308,51 @@ class BiometryHomePageState extends State<BiometryHomePage>
     );
   }
 
+  Future<void> _getConsentHistory() async {
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar('Biometry is not initialized.');
+      return;
+    }
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+      _animationController.forward();
+    });
+    try {
+      final history = await _biometry!.getConsentHistory();
+      setState(() {
+        _result = _formatConsentHistory(history);
+        _showResultsPanel = true;
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'Failed to fetch consent history: $e';
+        _showResultsPanel = true;
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+        _animationController.reverse();
+      });
+    }
+  }
+
+  String _formatConsentHistory(ConsentHistoryResult h) {
+    String formatRecord(String label, ConsentRecord r) {
+      final entries = r.history
+          .map((e) =>
+              '  • ${e.isConsentGiven ? "Granted" : "Revoked"} on ${e.date.toLocal()}')
+          .join('\n');
+      return '$label\n'
+          '  Current: ${r.isConsentGiven ? "Granted" : "Revoked"}\n'
+          '  History:\n$entries';
+    }
+
+    return 'Consent History for ${h.userFullname}\n\n'
+        '${formatRecord("Authorization Consent:", h.consent)}\n\n'
+        '${formatRecord("Storage Consent:", h.storageConsent)}';
+  }
+
   Future<void> _endSession() async {
     await _executeBiometricOperation(
       operationCallback: () => _biometry!.endSession(),
@@ -664,6 +709,12 @@ class BiometryHomePageState extends State<BiometryHomePage>
                               icon: Icons.storage,
                               onPressed: _allowStorageConsent,
                               tooltip: 'Allow storage of biometric data',
+                            ),
+                            _buildActionButton(
+                              label: 'View Consent History',
+                              icon: Icons.history,
+                              onPressed: _getConsentHistory,
+                              tooltip: 'Retrieve full consent history',
                             ),
                           ],
                         ),
