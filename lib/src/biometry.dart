@@ -21,6 +21,7 @@ import 'package:uuid/uuid.dart';
 ///   - [processVideo] - Processes a video file using the biometry service. If both consents are given, automatically performs enrollment.
 ///   - [enrolFace] - Enrolls a face using the biometry service (required if consents not given).
 ///   - [enrolVoice] - Enrolls voice using the biometry service (required if consents not given).
+///   - [getConsentHistory] - Retrieves the full authorization and storage consent history for the current user.
 class Biometry {
   static const String _host = 'https://api.biometrysolutions.com';
   static const String _apiGateway = '$_host/api-gateway';
@@ -600,7 +601,11 @@ class Biometry {
     _addGeoLocationHeader(request);
     debugPrint("request: $request");
     final response = await _client.send(request);
-    return http.Response.fromStream(response);
+    final httpResponse = await http.Response.fromStream(response);
+    if (httpResponse.statusCode >= 200 && httpResponse.statusCode < 300) {
+      _cachedConsent = null;
+    }
+    return httpResponse;
   }
 
   /// Allows Storage consent by sending a consent flag to the API.
@@ -635,7 +640,11 @@ class Biometry {
     _addGeoLocationHeader(request);
     debugPrint("request: $request");
     final response = await _client.send(request);
-    return http.Response.fromStream(response);
+    final httpResponse = await http.Response.fromStream(response);
+    if (httpResponse.statusCode >= 200 && httpResponse.statusCode < 300) {
+      _cachedConsent = null;
+    }
+    return httpResponse;
   }
 
   /// Collects detailed iOS device information and returns it as a JSON string.
