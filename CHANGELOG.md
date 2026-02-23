@@ -1,3 +1,13 @@
+## [1.0.7] - 2026-02-23
+
+### Added
+- New `getConsentHistory()` method to retrieve the full consent history for the current user, returning a typed `ConsentHistoryResult` with both authorization and storage consent records including their histories.
+- New model classes: `ConsentHistoryResult`, `ConsentRecord`, and `ConsentHistoryEntry` for typed access to consent history data.
+- Consent guard: `processVideo()`, `docAuth()`, `faceMatch()`, `enrolFace()`, and `enrolVoice()` now verify that the user has given authorization consent before executing. The consent check is fetched once per session and cached — no extra network call on subsequent operations.
+- Example app now includes a "View Consent History" button in the Consent Management section.
+
+Note: No breaking API changes; library API remains backward-compatible.
+
 ## [1.0.6] - 2025-12-31
 
 ### Changed
