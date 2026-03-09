@@ -13,6 +13,7 @@ import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:recase/recase.dart';
 import 'package:uuid/uuid.dart';
+import 'package:video_compress/video_compress.dart';
 
 /// A class to handle biometry-related operations.
 ///   - [initialize] - Initializes the Biometry class with a token, full name and an optional HTTP client.
@@ -26,6 +27,7 @@ class Biometry {
   static const String _host = 'https://api.biometrysolutions.com';
   static const String _apiGateway = '$_host/api-gateway';
   static const String _consentUrl = '$_host/api-consent';
+  static const String _apiTransactions = '$_host/api-transactions';
   static String _phrase = '';
 
   // Generate a 7-digit number with unique digits from 0-9.
@@ -42,7 +44,7 @@ class Biometry {
   /// The path to the image of the person.
   String? _faceImagePath;
 
-  /// Cached consent state, populated on first call to [_assertConsent].
+  /// Cached consent state, populated on first call to [assertConsent].
   ConsentHistoryResult? _cachedConsent;
 
   /// Geolocation information to be included in transactions.
@@ -54,14 +56,22 @@ class Biometry {
     this.sessionId,
     this._fullName, {
     BiometryGeoLocation? geoLocation,
-  }) : _geoLocation = geoLocation;
+    String? initialFaceImagePath,
+  })  : _geoLocation = geoLocation,
+        _faceImagePath = initialFaceImagePath;
 
   /// Initializes the Biometry class with a token, full name and an optional HTTP client.
+  ///
+  /// [referenceFramePath] - Optional path to a previously extracted reference frame
+  /// (from [extractReferenceFrame]). When provided, [faceMatch] will use this frame
+  /// as the reference image instead of requiring [docAuth] to be called first.
+  /// The file must exist on disk; if not, it is silently ignored.
   static Future<Biometry> initialize({
     required String token,
     required String fullName,
     http.Client? client,
     BiometryGeoLocation? geoLocation,
+    String? referenceFramePath,
   }) async {
     await _configureAudioSession();
 
@@ -74,9 +84,14 @@ class Biometry {
     final digits = allDigits.take(7).toList();
     Biometry._phrase = digits.join();
 
+    final String? validatedFramePath =
+        (referenceFramePath != null && File(referenceFramePath).existsSync())
+            ? referenceFramePath
+            : null;
+
     debugPrint("Phrase: $_phrase");
     return Biometry._(token, httpClient, id, fullName,
-        geoLocation: geoLocation);
+        geoLocation: geoLocation, initialFaceImagePath: validatedFramePath);
   }
 
   /// Sets or updates the geolocation information.
@@ -262,8 +277,6 @@ class Biometry {
 
   /// Enrolls a face using the biometry service.
   Future<http.Response> enrolFace() async {
-    await _assertConsent();
-
     if (_faceImagePath == null) {
       throw Exception(
           'No face image available. Please authenticate a document first.');
@@ -324,8 +337,6 @@ class Biometry {
   Future<http.Response> enrolVoice({
     required File videoFile,
   }) async {
-    await _assertConsent();
-
     final uri = Uri.parse('$_apiGateway/enroll/voice');
 
     final fileExtension = videoFile.path.split('.').last.toLowerCase();
@@ -388,8 +399,6 @@ class Biometry {
   /// Developer docs: https://developer.biometrysolutions.com/concepts/doc-auth/
   ///
   Future<http.Response> docAuth() async {
-    await _assertConsent();
-
     final uri = Uri.parse('$_apiGateway/docauth/check');
     var docFile = await scanDocument();
     debugPrint("docFile: $docFile");
@@ -449,10 +458,8 @@ class Biometry {
   /// Throws an `Exception` if the request fails.
   /// Developer docs: https://developer.biometrysolutions.com/concepts/face-match/
   Future<http.Response> faceMatch() async {
-    await _assertConsent();
-
     if (_faceImagePath == null) {
-      throw Exception('No face image path provided');
+      throw Exception('No face image path provided!!!!');
     }
 
     final uri = Uri.parse('$_apiGateway/match-faces');
@@ -467,7 +474,10 @@ class Biometry {
         await http.MultipartFile.fromPath(
           'image',
           _faceImagePath!,
-          contentType: MediaType('application', 'png'),
+          contentType: _faceImagePath!.toLowerCase().endsWith('.jpg') ||
+                  _faceImagePath!.toLowerCase().endsWith('.jpeg')
+              ? MediaType('image', 'jpeg')
+              : MediaType('image', 'png'),
         ),
       )
       ..fields['X-Request-User-Provided-ID'] = sessionId;
@@ -508,6 +518,96 @@ class Biometry {
     return response;
   }
 
+  /// Extracts a reference frame from the given video and stores it as the
+  /// face image for all subsequent [faceMatch] calls.
+  ///
+  /// Call this once after the initial successful [faceMatch] (which uses the
+  /// DocAuth photo). The extracted frame is saved permanently to the app's
+  /// documents directory as `reference_face.jpg`, replacing the DocAuth image
+  /// as the reference for future sessions.
+  ///
+  /// Returns the absolute path to the saved frame so the caller can persist it
+  /// (e.g. in SharedPreferences) and supply it back via the [referenceFramePath]
+  /// parameter of [initialize] on subsequent launches.
+  ///
+  /// Throws an [Exception] if the thumbnail cannot be extracted.
+  Future<String> extractReferenceFrame(File videoFile) async {
+    final thumbnail = await VideoCompress.getByteThumbnail(
+      videoFile.path,
+      quality: 75,
+      position: -1,
+    );
+
+    if (thumbnail == null) {
+      throw Exception('Failed to extract reference frame from video');
+    }
+
+    final directory = await getApplicationDocumentsDirectory();
+    final filePath = '${directory.path}/reference_face.jpg';
+    await File(filePath).writeAsBytes(thumbnail);
+
+    _faceImagePath = filePath;
+    dev.log('Reference frame saved to: $filePath');
+    return filePath;
+  }
+
+  /// Fetches the server-extracted reference frame for [transactionId] (the
+  /// `X-Request-Id` value returned by a previous [processVideo] call) and
+  /// stores it as the face image for all subsequent [faceMatch] calls.
+  ///
+  /// Because the frame is held on Biometry's servers, this works on any device
+  /// that has the transaction ID — not just the device that recorded the video.
+  /// Save the transaction ID in your own backend (linked to the user's account)
+  /// so that every new device can call this method on initialization.
+  ///
+  /// The frame is written to `documents/reference_face.jpg` (same stable path
+  /// as [extractReferenceFrame]) and [faceImagePath] is updated accordingly.
+  ///
+  /// Throws an [Exception] if the samples cannot be fetched or no frame is
+  /// available for the given transaction.
+  Future<String> setReferenceFrameFromTransaction(String transactionId) async {
+    final uri =
+        Uri.parse('$_apiTransactions/transactions/$transactionId/samples');
+
+    final request = http.Request('GET', uri)
+      ..headers['Authorization'] = 'Bearer $_token';
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+          'Failed to fetch transaction samples: ${response.statusCode}');
+    }
+
+    final jsonResponse = jsonDecode(response.body) as Map<String, dynamic>;
+    final data = (jsonResponse['data'] ?? jsonResponse) as Map<String, dynamic>;
+
+    // The API returns hyphenated keys: "login-extracted-frame"
+    final frame = (data['login-extracted-frame'] ??
+        data['login_extracted_frame']) as String?;
+    if (frame == null || frame.isEmpty) {
+      throw Exception(
+          'No extracted frame available for transaction $transactionId');
+    }
+
+    // The value is a signed GCS URL (expires in 15 minutes). Use a clean
+    // HTTP client so the Biometry auth header isn't forwarded to GCS.
+    final imageResponse = await http.get(Uri.parse(frame));
+    if (imageResponse.statusCode < 200 || imageResponse.statusCode >= 300) {
+      throw Exception(
+          'Failed to download reference frame: ${imageResponse.statusCode}');
+    }
+
+    final directory = await getApplicationDocumentsDirectory();
+    final filePath = '${directory.path}/reference_face.jpg';
+    await File(filePath).writeAsBytes(imageResponse.bodyBytes);
+
+    _faceImagePath = filePath;
+    dev.log('Reference frame restored from transaction $transactionId');
+    return filePath;
+  }
+
   /// Processes a video file.
   ///
   /// Sends a POST request to the biometry service to process the video.
@@ -522,8 +622,6 @@ class Biometry {
   Future<http.Response> processVideo({
     required File videoFile,
   }) async {
-    await _assertConsent();
-
     final uri = Uri.parse('$_apiGateway/process-video');
 
     final request = http.MultipartRequest('POST', uri)
@@ -702,7 +800,12 @@ class Biometry {
         return;
       }
 
-      final data = jsonResponse['data'] as Map<String, dynamic>;
+      final dataRaw = jsonResponse['data'];
+      if (dataRaw is! Map<String, dynamic>) {
+        dev.log('Error: Invalid JSON response - "data" is null or not a map');
+        return;
+      }
+      final data = dataRaw;
       if (!data.containsKey('face_image_base64') ||
           data['face_image_base64'] is! String) {
         dev.log('Error: Missing or invalid "face_image_base64" key');
@@ -769,10 +872,11 @@ class Biometry {
   /// Ensures the user has given authorization consent, fetching and caching
   /// the result on first call. Subsequent calls within the same session reuse
   /// the cached value without an extra network request.
-  Future<void> _assertConsent() async {
+  Future<void> assertConsent() async {
     _cachedConsent ??= await getConsentHistory();
 
-    if (!_cachedConsent!.consent.isConsentGiven) {
+    if (_cachedConsent!.consent == null ||
+        !_cachedConsent!.consent!.isConsentGiven) {
       throw Exception('User "$_fullName" has not given authorization consent.');
     }
   }
@@ -791,12 +895,24 @@ class Biometry {
       headers: {'Authorization': 'Bearer $_token'},
     );
 
+    // 404 means no consents exist at all — return a result with both fields
+    // null so the caller can inspect and react rather than catching an exception.
+    if (response.statusCode == 404) {
+      return ConsentHistoryResult(userFullname: _fullName);
+    }
+
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('Failed to fetch consent history: ${response.body}');
     }
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
-    return ConsentHistoryResult.fromJson(json['data'] as Map<String, dynamic>);
+    final dataRaw = json['data'];
+    if (dataRaw is! Map<String, dynamic>) {
+      throw Exception(
+        'Unexpected consent history response format: ${response.body}',
+      );
+    }
+    return ConsentHistoryResult.fromJson(dataRaw);
   }
 }
 
@@ -840,11 +956,16 @@ class BiometryGeoLocation {
 
 /// A single entry in a consent history list.
 class ConsentHistoryEntry {
+  /// Whether consent was granted or revoked in this entry.
   final bool isConsentGiven;
+
+  /// When this consent change occurred.
   final DateTime date;
 
+  /// Creates an entry with the given [isConsentGiven] and [date].
   const ConsentHistoryEntry({required this.isConsentGiven, required this.date});
 
+  /// Parses [ConsentHistoryEntry] from the API JSON shape.
   factory ConsentHistoryEntry.fromJson(Map<String, dynamic> json) =>
       ConsentHistoryEntry(
         isConsentGiven: json['is_consent_given'] as bool,
@@ -854,11 +975,19 @@ class ConsentHistoryEntry {
 
 /// A single consent record with its full history.
 class ConsentRecord {
+  /// Current consent state (true = granted, false = revoked).
   final bool isConsentGiven;
+
+  /// Chronological list of consent changes.
   final List<ConsentHistoryEntry> history;
+
+  /// When this consent record was first created.
   final DateTime createdAt;
+
+  /// When this consent record was last updated.
   final DateTime updatedAt;
 
+  /// Creates a record with the given fields.
   const ConsentRecord({
     required this.isConsentGiven,
     required this.history,
@@ -866,6 +995,7 @@ class ConsentRecord {
     required this.updatedAt,
   });
 
+  /// Parses [ConsentRecord] from the API JSON shape.
   factory ConsentRecord.fromJson(Map<String, dynamic> json) => ConsentRecord(
         isConsentGiven: json['is_consent_given'] as bool,
         history: (json['history'] as List<dynamic>)
@@ -877,23 +1007,39 @@ class ConsentRecord {
 }
 
 /// The full consent history for a user, returned by [Biometry.getConsentHistory].
+///
+/// Per the API contract, [consent] is null when the user has only given storage
+/// consent, and [storageConsent] is null when the user has only given
+/// authorization consent. Both are non-null when the user has given both.
 class ConsentHistoryResult {
+  /// User identifier (full name) for this consent history.
   final String userFullname;
-  final ConsentRecord consent;
-  final ConsentRecord storageConsent;
 
+  /// Authorization consent record. Null if the user has never given
+  /// authorization consent (only storage consent exists).
+  final ConsentRecord? consent;
+
+  /// Storage consent record. Null if the user has never given storage consent
+  /// (only authorization consent exists).
+  final ConsentRecord? storageConsent;
+
+  /// Creates a result with the given [userFullname] and optional consent records.
   const ConsentHistoryResult({
     required this.userFullname,
-    required this.consent,
-    required this.storageConsent,
+    this.consent,
+    this.storageConsent,
   });
 
+  /// Parses [ConsentHistoryResult] from the API JSON shape.
   factory ConsentHistoryResult.fromJson(Map<String, dynamic> json) =>
       ConsentHistoryResult(
         userFullname: json['user_fullname'] as String,
-        consent:
-            ConsentRecord.fromJson(json['consent'] as Map<String, dynamic>),
-        storageConsent: ConsentRecord.fromJson(
-            json['storage_consent'] as Map<String, dynamic>),
+        consent: json['consent'] != null
+            ? ConsentRecord.fromJson(json['consent'] as Map<String, dynamic>)
+            : null,
+        storageConsent: json['storage_consent'] != null
+            ? ConsentRecord.fromJson(
+                json['storage_consent'] as Map<String, dynamic>)
+            : null,
       );
 }

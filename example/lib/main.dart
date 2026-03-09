@@ -7,6 +7,7 @@ import 'package:biometry/biometry_scanner_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 // theme constants
 class AppTheme {
@@ -54,6 +55,9 @@ class BiometryHomePage extends StatefulWidget {
 
 class BiometryHomePageState extends State<BiometryHomePage>
     with SingleTickerProviderStateMixin {
+  static const String _referenceTransactionKey =
+      'biometry_reference_transaction_id';
+
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _fullNameController = TextEditingController();
@@ -66,6 +70,17 @@ class BiometryHomePageState extends State<BiometryHomePage>
   late AnimationController _animationController;
   bool _showResultsPanel = false;
 
+  /// Transaction ID (X-Request-Id) from the processVideo call that established
+  /// the initial face reference. Persisted in SharedPreferences so it can be
+  /// used to restore the reference frame on any device via
+  /// [Biometry.setReferenceFrameFromTransaction].
+  String? _referenceTransactionId;
+
+  /// Transaction ID captured from the most recent [processVideo] response.
+  /// Used as the source for [setReferenceFrameFromTransaction] after the
+  /// initial [faceMatch].
+  String? _processVideoTransactionId;
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +88,17 @@ class BiometryHomePageState extends State<BiometryHomePage>
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
+    _loadReferenceState();
+  }
+
+  Future<void> _loadReferenceState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final transactionId = prefs.getString(_referenceTransactionKey);
+    if (transactionId != null && transactionId.isNotEmpty) {
+      setState(() {
+        _referenceTransactionId = transactionId;
+      });
+    }
   }
 
   @override
@@ -226,6 +252,19 @@ class BiometryHomePageState extends State<BiometryHomePage>
         _isBiometryInitialized = true;
       });
 
+      // Restore reference frame from the server if a transaction ID is stored.
+      // This works on any device that holds the transaction ID.
+      if (_referenceTransactionId != null) {
+        try {
+          await _biometry!
+              .setReferenceFrameFromTransaction(_referenceTransactionId!);
+          dev.log(
+              'Reference frame restored for transaction $_referenceTransactionId');
+        } catch (e) {
+          dev.log('Could not restore reference frame: $e');
+        }
+      }
+
       final message = geoLocation != null
           ? 'Biometry initialized with location: ${geoLocation.city}, ${geoLocation.country}'
           : 'Biometry initialized successfully';
@@ -348,9 +387,14 @@ class BiometryHomePageState extends State<BiometryHomePage>
           '  History:\n$entries';
     }
 
-    return 'Consent History for ${h.userFullname}\n\n'
-        '${formatRecord("Authorization Consent:", h.consent)}\n\n'
-        '${formatRecord("Storage Consent:", h.storageConsent)}';
+    final authConsent = h.consent != null
+        ? formatRecord("Authorization Consent:", h.consent!)
+        : 'Authorization Consent:\n  Not set';
+    final storageConsent = h.storageConsent != null
+        ? formatRecord("Storage Consent:", h.storageConsent!)
+        : 'Storage Consent:\n  Not set';
+
+    return 'Consent History for ${h.userFullname}\n\n$authConsent\n\n$storageConsent';
   }
 
   Future<void> _endSession() async {
@@ -369,13 +413,67 @@ class BiometryHomePageState extends State<BiometryHomePage>
   }
 
   Future<void> _processVideo() async {
-    await _executeBiometricOperation(
-      operationCallback: () =>
-          _biometry!.processVideo(videoFile: _capturedVideo!),
-      successMessage: 'Video processed successfully!',
-      errorMessage: 'Failed to process video',
-      requireVideo: true,
-    );
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar('Biometry is not initialized.');
+      return;
+    }
+    if (_capturedVideo == null) {
+      _showSnackBar('Please scan a person first.');
+      return;
+    }
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+      _animationController.forward();
+    });
+    try {
+      final response =
+          await _biometry!.processVideo(videoFile: _capturedVideo!);
+
+      // Capture the server-assigned transaction ID for later use as
+      // the cross-device reference frame identifier.
+      final transactionId = response.headers['x-request-id'];
+      if (transactionId != null && transactionId.isNotEmpty) {
+        setState(() {
+          _processVideoTransactionId = transactionId;
+        });
+        dev.log('processVideo transaction ID: $transactionId');
+      }
+
+      setState(() {
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          _result = 'Video processed successfully!\n${response.body}';
+        } else {
+          _result =
+              'Failed to process video: ${response.statusCode}\n${response.body}';
+        }
+        _showResultsPanel = true;
+      });
+    } on HttpException catch (e) {
+      setState(() {
+        _result = 'Network error: $e';
+        _showResultsPanel = true;
+      });
+    } on FormatException catch (e) {
+      setState(() {
+        _result = 'Invalid response format: $e';
+        _showResultsPanel = true;
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'Unexpected error: $e';
+        _showResultsPanel = true;
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+        _animationController.reverse();
+      });
+    }
   }
 
   Future<void> _processDocAuth() async {
@@ -387,11 +485,73 @@ class BiometryHomePageState extends State<BiometryHomePage>
   }
 
   Future<void> _faceMatch() async {
-    await _executeBiometricOperation(
-      operationCallback: () => _biometry!.faceMatch(),
-      successMessage: 'Face match processed successfully!',
-      errorMessage: 'Failed to match face',
-    );
+    if (!_formKey.currentState!.validate()) {
+      _showSnackBar('Please provide all required information.');
+      return;
+    }
+    if (_biometry == null || !_isBiometryInitialized) {
+      _showSnackBar('Biometry is not initialized.');
+      return;
+    }
+    setState(() {
+      _isProcessing = true;
+      _result = '';
+      _animationController.forward();
+    });
+    try {
+      final response = await _biometry!.faceMatch();
+
+      // After the initial verification (DocAuth photo used as reference),
+      // fetch the server-extracted frame using the processVideo transaction ID
+      // and persist that ID so any device can restore the reference.
+      if (_referenceTransactionId == null &&
+          _processVideoTransactionId != null) {
+        try {
+          await _biometry!
+              .setReferenceFrameFromTransaction(_processVideoTransactionId!);
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(
+              _referenceTransactionKey, _processVideoTransactionId!);
+          setState(() {
+            _referenceTransactionId = _processVideoTransactionId;
+          });
+          dev.log(
+              'Reference transaction persisted: $_processVideoTransactionId');
+        } catch (e) {
+          dev.log('Failed to set reference frame from transaction: $e');
+        }
+      }
+
+      setState(() {
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          _result = 'Face match processed successfully!\n${response.body}';
+        } else {
+          _result =
+              'Failed to match face: ${response.statusCode}\n${response.body}';
+        }
+        _showResultsPanel = true;
+      });
+    } on HttpException catch (e) {
+      setState(() {
+        _result = 'Network error: $e';
+        _showResultsPanel = true;
+      });
+    } on FormatException catch (e) {
+      setState(() {
+        _result = 'Invalid response format: $e';
+        _showResultsPanel = true;
+      });
+    } catch (e) {
+      setState(() {
+        _result = 'Unexpected error: $e';
+        _showResultsPanel = true;
+      });
+    } finally {
+      setState(() {
+        _isProcessing = false;
+        _animationController.reverse();
+      });
+    }
   }
 
   Future<void> _enrollVoice() async {
@@ -774,12 +934,36 @@ class BiometryHomePageState extends State<BiometryHomePage>
                               tooltip:
                                   'Process the captured video (auto-enrolls if consents given)',
                             ),
-                            _buildActionButton(
-                              label: 'Document Auth',
-                              onPressed: _processDocAuth,
-                              icon: Icons.document_scanner,
-                              tooltip: 'Authenticate a document',
-                            ),
+                            if (_referenceTransactionId == null) ...[
+                              _buildActionButton(
+                                label: 'Document Auth',
+                                onPressed: _processDocAuth,
+                                icon: Icons.document_scanner,
+                                tooltip:
+                                    'Scan document to establish initial face reference',
+                              ),
+                            ] else ...[
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.verified_user,
+                                        color: AppTheme.successColor, size: 20),
+                                    const SizedBox(width: 8),
+                                    const Expanded(
+                                      child: Text(
+                                        'Reference frame active — Document Auth not required',
+                                        style: TextStyle(
+                                          color: AppTheme.successColor,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                             _buildActionButton(
                               label: 'Enroll Face',
                               onPressed: _enrollFace,
@@ -797,7 +981,9 @@ class BiometryHomePageState extends State<BiometryHomePage>
                               label: 'Face Match',
                               onPressed: _faceMatch,
                               icon: Icons.compare,
-                              tooltip: 'Match face against document',
+                              tooltip: _referenceTransactionId != null
+                                  ? 'Match face against verified reference frame'
+                                  : 'Match face against document (initial setup)',
                             ),
                           ],
                         ),

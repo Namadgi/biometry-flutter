@@ -1,3 +1,23 @@
+## [1.0.8] - 2026-03-03
+
+### Added
+- **Reference frame for face match (cross-device):** `Biometry.initialize()` accepts optional `referenceFramePath` to use a local reference image without calling `docAuth()` first.
+- **Server-extracted reference frame:** `setReferenceFrameFromTransaction(transactionId)` fetches the frame from the Biometry samples API (`X-Request-Id` from `processVideo` response) and sets it as the face reference — works on any device that has the transaction ID.
+- **Client-extracted reference frame:** `extractReferenceFrame(videoFile)` extracts a frame from a video file and saves it as the reference (e.g. for offline or testing).
+- `faceMatch()` now sets the request content-type from the reference image file extension (`image/jpeg` for `.jpg`/`.jpeg`, `image/png` otherwise).
+
+### Changed
+- **Consent history API:** `ConsentHistoryResult.consent` and `ConsentHistoryResult.storageConsent` are now nullable (`ConsentRecord?`) to match the API (one consent type can be null). Code that formats or displays consent must handle null.
+- **getConsentHistory():** A 404 response now returns a `ConsentHistoryResult` with both consent fields null instead of throwing. Non-404 errors still throw with a clear message. Parse/unexpected-format failures throw with an "Unexpected consent history response format" message instead of "No consents found".
+- **assertConsent():** Handles null `consent` before reading `isConsentGiven`.
+- **Samples API:** Response key for the extracted frame is read as `login-extracted-frame` (hyphenated) with fallback to `login_extracted_frame`. Reference frame download uses a separate `http.get()` for the signed GCS URL so the Biometry auth header is not sent to storage.
+
+### Fixed
+- Consent history parsing no longer throws when the API returns null for `consent` or `storage_consent`.
+- Correct handling of the Get samples response format per [Biometry API docs](https://developer.biometrysolutions.com/api/transactions-samples/).
+
+Note: No breaking API changes for callers that null-check or use optional consent fields. Callers that assumed non-null `consent`/`storageConsent` need to add null checks.
+
 ## [1.0.7] - 2026-02-23
 
 ### Added
