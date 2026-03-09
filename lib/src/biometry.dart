@@ -13,7 +13,6 @@ import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:recase/recase.dart';
 import 'package:uuid/uuid.dart';
-import 'package:video_compress/video_compress.dart';
 
 /// A class to handle biometry-related operations.
 ///   - [initialize] - Initializes the Biometry class with a token, full name and an optional HTTP client.
@@ -27,7 +26,6 @@ class Biometry {
   static const String _host = 'https://api.biometrysolutions.com';
   static const String _apiGateway = '$_host/api-gateway';
   static const String _consentUrl = '$_host/api-consent';
-  static const String _apiTransactions = '$_host/api-transactions';
   static String _phrase = '';
 
   // Generate a 7-digit number with unique digits from 0-9.
@@ -56,22 +54,14 @@ class Biometry {
     this.sessionId,
     this._fullName, {
     BiometryGeoLocation? geoLocation,
-    String? initialFaceImagePath,
-  })  : _geoLocation = geoLocation,
-        _faceImagePath = initialFaceImagePath;
+  }) : _geoLocation = geoLocation;
 
   /// Initializes the Biometry class with a token, full name and an optional HTTP client.
-  ///
-  /// [referenceFramePath] - Optional path to a previously extracted reference frame
-  /// (from [extractReferenceFrame]). When provided, [faceMatch] will use this frame
-  /// as the reference image instead of requiring [docAuth] to be called first.
-  /// The file must exist on disk; if not, it is silently ignored.
   static Future<Biometry> initialize({
     required String token,
     required String fullName,
     http.Client? client,
     BiometryGeoLocation? geoLocation,
-    String? referenceFramePath,
   }) async {
     await _configureAudioSession();
 
@@ -84,14 +74,9 @@ class Biometry {
     final digits = allDigits.take(7).toList();
     Biometry._phrase = digits.join();
 
-    final String? validatedFramePath =
-        (referenceFramePath != null && File(referenceFramePath).existsSync())
-            ? referenceFramePath
-            : null;
-
     debugPrint("Phrase: $_phrase");
     return Biometry._(token, httpClient, id, fullName,
-        geoLocation: geoLocation, initialFaceImagePath: validatedFramePath);
+        geoLocation: geoLocation);
   }
 
   /// Sets or updates the geolocation information.
@@ -459,7 +444,7 @@ class Biometry {
   /// Developer docs: https://developer.biometrysolutions.com/concepts/face-match/
   Future<http.Response> faceMatch() async {
     if (_faceImagePath == null) {
-      throw Exception('No face image path provided!!!!');
+      throw Exception('No face image path provided');
     }
 
     final uri = Uri.parse('$_apiGateway/match-faces');
@@ -516,96 +501,6 @@ class Biometry {
       print('Face match response: ${response.body}');
     }
     return response;
-  }
-
-  /// Extracts a reference frame from the given video and stores it as the
-  /// face image for all subsequent [faceMatch] calls.
-  ///
-  /// Call this once after the initial successful [faceMatch] (which uses the
-  /// DocAuth photo). The extracted frame is saved permanently to the app's
-  /// documents directory as `reference_face.jpg`, replacing the DocAuth image
-  /// as the reference for future sessions.
-  ///
-  /// Returns the absolute path to the saved frame so the caller can persist it
-  /// (e.g. in SharedPreferences) and supply it back via the [referenceFramePath]
-  /// parameter of [initialize] on subsequent launches.
-  ///
-  /// Throws an [Exception] if the thumbnail cannot be extracted.
-  Future<String> extractReferenceFrame(File videoFile) async {
-    final thumbnail = await VideoCompress.getByteThumbnail(
-      videoFile.path,
-      quality: 75,
-      position: -1,
-    );
-
-    if (thumbnail == null) {
-      throw Exception('Failed to extract reference frame from video');
-    }
-
-    final directory = await getApplicationDocumentsDirectory();
-    final filePath = '${directory.path}/reference_face.jpg';
-    await File(filePath).writeAsBytes(thumbnail);
-
-    _faceImagePath = filePath;
-    dev.log('Reference frame saved to: $filePath');
-    return filePath;
-  }
-
-  /// Fetches the server-extracted reference frame for [transactionId] (the
-  /// `X-Request-Id` value returned by a previous [processVideo] call) and
-  /// stores it as the face image for all subsequent [faceMatch] calls.
-  ///
-  /// Because the frame is held on Biometry's servers, this works on any device
-  /// that has the transaction ID — not just the device that recorded the video.
-  /// Save the transaction ID in your own backend (linked to the user's account)
-  /// so that every new device can call this method on initialization.
-  ///
-  /// The frame is written to `documents/reference_face.jpg` (same stable path
-  /// as [extractReferenceFrame]) and [faceImagePath] is updated accordingly.
-  ///
-  /// Throws an [Exception] if the samples cannot be fetched or no frame is
-  /// available for the given transaction.
-  Future<String> setReferenceFrameFromTransaction(String transactionId) async {
-    final uri =
-        Uri.parse('$_apiTransactions/transactions/$transactionId/samples');
-
-    final request = http.Request('GET', uri)
-      ..headers['Authorization'] = 'Bearer $_token';
-
-    final streamedResponse = await _client.send(request);
-    final response = await http.Response.fromStream(streamedResponse);
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-          'Failed to fetch transaction samples: ${response.statusCode}');
-    }
-
-    final jsonResponse = jsonDecode(response.body) as Map<String, dynamic>;
-    final data = (jsonResponse['data'] ?? jsonResponse) as Map<String, dynamic>;
-
-    // The API returns hyphenated keys: "login-extracted-frame"
-    final frame = (data['login-extracted-frame'] ??
-        data['login_extracted_frame']) as String?;
-    if (frame == null || frame.isEmpty) {
-      throw Exception(
-          'No extracted frame available for transaction $transactionId');
-    }
-
-    // The value is a signed GCS URL (expires in 15 minutes). Use a clean
-    // HTTP client so the Biometry auth header isn't forwarded to GCS.
-    final imageResponse = await http.get(Uri.parse(frame));
-    if (imageResponse.statusCode < 200 || imageResponse.statusCode >= 300) {
-      throw Exception(
-          'Failed to download reference frame: ${imageResponse.statusCode}');
-    }
-
-    final directory = await getApplicationDocumentsDirectory();
-    final filePath = '${directory.path}/reference_face.jpg';
-    await File(filePath).writeAsBytes(imageResponse.bodyBytes);
-
-    _faceImagePath = filePath;
-    dev.log('Reference frame restored from transaction $transactionId');
-    return filePath;
   }
 
   /// Processes a video file.
