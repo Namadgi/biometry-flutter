@@ -48,7 +48,7 @@ void main() {
         fail('Unexpected URL call: $url');
       });
 
-      // Stub GET requests (getConsentHistory, called by _assertConsent)
+      // Stub GET requests (getConsentHistory)
       when(mockHttpClient.get(any, headers: anyNamed('headers')))
           .thenAnswer((_) async => http.Response(
                 '{"data":{"user_fullname":"John Doe",'

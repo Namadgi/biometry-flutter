@@ -348,9 +348,14 @@ class BiometryHomePageState extends State<BiometryHomePage>
           '  History:\n$entries';
     }
 
-    return 'Consent History for ${h.userFullname}\n\n'
-        '${formatRecord("Authorization Consent:", h.consent)}\n\n'
-        '${formatRecord("Storage Consent:", h.storageConsent)}';
+    final authConsent = h.consent != null
+        ? formatRecord("Authorization Consent:", h.consent!)
+        : 'Authorization Consent:\n  Not set';
+    final storageConsent = h.storageConsent != null
+        ? formatRecord("Storage Consent:", h.storageConsent!)
+        : 'Storage Consent:\n  Not set';
+
+    return 'Consent History for ${h.userFullname}\n\n$authConsent\n\n$storageConsent';
   }
 
   Future<void> _endSession() async {
@@ -370,8 +375,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _processVideo() async {
     await _executeBiometricOperation(
-      operationCallback: () =>
-          _biometry!.processVideo(videoFile: _capturedVideo!),
+      operationCallback: () => _biometry!.processVideo(videoFile: _capturedVideo!),
       successMessage: 'Video processed successfully!',
       errorMessage: 'Failed to process video',
       requireVideo: true,
@@ -778,7 +782,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
                               label: 'Document Auth',
                               onPressed: _processDocAuth,
                               icon: Icons.document_scanner,
-                              tooltip: 'Authenticate a document',
+                              tooltip: 'Scan document for authentication',
                             ),
                             _buildActionButton(
                               label: 'Enroll Face',

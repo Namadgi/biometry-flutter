@@ -42,7 +42,7 @@ class Biometry {
   /// The path to the image of the person.
   String? _faceImagePath;
 
-  /// Cached consent state, populated on first call to [_assertConsent].
+  /// Cached consent state, populated on first call to [assertConsent].
   ConsentHistoryResult? _cachedConsent;
 
   /// Geolocation information to be included in transactions.
@@ -262,8 +262,6 @@ class Biometry {
 
   /// Enrolls a face using the biometry service.
   Future<http.Response> enrolFace() async {
-    await _assertConsent();
-
     if (_faceImagePath == null) {
       throw Exception(
           'No face image available. Please authenticate a document first.');
@@ -324,8 +322,6 @@ class Biometry {
   Future<http.Response> enrolVoice({
     required File videoFile,
   }) async {
-    await _assertConsent();
-
     final uri = Uri.parse('$_apiGateway/enroll/voice');
 
     final fileExtension = videoFile.path.split('.').last.toLowerCase();
@@ -388,8 +384,6 @@ class Biometry {
   /// Developer docs: https://developer.biometrysolutions.com/concepts/doc-auth/
   ///
   Future<http.Response> docAuth() async {
-    await _assertConsent();
-
     final uri = Uri.parse('$_apiGateway/docauth/check');
     var docFile = await scanDocument();
     debugPrint("docFile: $docFile");
@@ -449,8 +443,6 @@ class Biometry {
   /// Throws an `Exception` if the request fails.
   /// Developer docs: https://developer.biometrysolutions.com/concepts/face-match/
   Future<http.Response> faceMatch() async {
-    await _assertConsent();
-
     if (_faceImagePath == null) {
       throw Exception('No face image path provided');
     }
@@ -467,7 +459,10 @@ class Biometry {
         await http.MultipartFile.fromPath(
           'image',
           _faceImagePath!,
-          contentType: MediaType('application', 'png'),
+          contentType: _faceImagePath!.toLowerCase().endsWith('.jpg') ||
+                  _faceImagePath!.toLowerCase().endsWith('.jpeg')
+              ? MediaType('image', 'jpeg')
+              : MediaType('image', 'png'),
         ),
       )
       ..fields['X-Request-User-Provided-ID'] = sessionId;
@@ -522,8 +517,6 @@ class Biometry {
   Future<http.Response> processVideo({
     required File videoFile,
   }) async {
-    await _assertConsent();
-
     final uri = Uri.parse('$_apiGateway/process-video');
 
     final request = http.MultipartRequest('POST', uri)
@@ -702,7 +695,12 @@ class Biometry {
         return;
       }
 
-      final data = jsonResponse['data'] as Map<String, dynamic>;
+      final dataRaw = jsonResponse['data'];
+      if (dataRaw is! Map<String, dynamic>) {
+        dev.log('Error: Invalid JSON response - "data" is null or not a map');
+        return;
+      }
+      final data = dataRaw;
       if (!data.containsKey('face_image_base64') ||
           data['face_image_base64'] is! String) {
         dev.log('Error: Missing or invalid "face_image_base64" key');
@@ -769,10 +767,11 @@ class Biometry {
   /// Ensures the user has given authorization consent, fetching and caching
   /// the result on first call. Subsequent calls within the same session reuse
   /// the cached value without an extra network request.
-  Future<void> _assertConsent() async {
+  Future<void> assertConsent() async {
     _cachedConsent ??= await getConsentHistory();
 
-    if (!_cachedConsent!.consent.isConsentGiven) {
+    if (_cachedConsent!.consent == null ||
+        !_cachedConsent!.consent!.isConsentGiven) {
       throw Exception('User "$_fullName" has not given authorization consent.');
     }
   }
@@ -791,12 +790,24 @@ class Biometry {
       headers: {'Authorization': 'Bearer $_token'},
     );
 
+    // 404 means no consents exist at all — return a result with both fields
+    // null so the caller can inspect and react rather than catching an exception.
+    if (response.statusCode == 404) {
+      return ConsentHistoryResult(userFullname: _fullName);
+    }
+
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('Failed to fetch consent history: ${response.body}');
     }
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
-    return ConsentHistoryResult.fromJson(json['data'] as Map<String, dynamic>);
+    final dataRaw = json['data'];
+    if (dataRaw is! Map<String, dynamic>) {
+      throw Exception(
+        'Unexpected consent history response format: ${response.body}',
+      );
+    }
+    return ConsentHistoryResult.fromJson(dataRaw);
   }
 }
 
@@ -840,11 +851,16 @@ class BiometryGeoLocation {
 
 /// A single entry in a consent history list.
 class ConsentHistoryEntry {
+  /// Whether consent was granted or revoked in this entry.
   final bool isConsentGiven;
+
+  /// When this consent change occurred.
   final DateTime date;
 
+  /// Creates an entry with the given [isConsentGiven] and [date].
   const ConsentHistoryEntry({required this.isConsentGiven, required this.date});
 
+  /// Parses [ConsentHistoryEntry] from the API JSON shape.
   factory ConsentHistoryEntry.fromJson(Map<String, dynamic> json) =>
       ConsentHistoryEntry(
         isConsentGiven: json['is_consent_given'] as bool,
@@ -854,11 +870,19 @@ class ConsentHistoryEntry {
 
 /// A single consent record with its full history.
 class ConsentRecord {
+  /// Current consent state (true = granted, false = revoked).
   final bool isConsentGiven;
+
+  /// Chronological list of consent changes.
   final List<ConsentHistoryEntry> history;
+
+  /// When this consent record was first created.
   final DateTime createdAt;
+
+  /// When this consent record was last updated.
   final DateTime updatedAt;
 
+  /// Creates a record with the given fields.
   const ConsentRecord({
     required this.isConsentGiven,
     required this.history,
@@ -866,6 +890,7 @@ class ConsentRecord {
     required this.updatedAt,
   });
 
+  /// Parses [ConsentRecord] from the API JSON shape.
   factory ConsentRecord.fromJson(Map<String, dynamic> json) => ConsentRecord(
         isConsentGiven: json['is_consent_given'] as bool,
         history: (json['history'] as List<dynamic>)
@@ -877,23 +902,39 @@ class ConsentRecord {
 }
 
 /// The full consent history for a user, returned by [Biometry.getConsentHistory].
+///
+/// Per the API contract, [consent] is null when the user has only given storage
+/// consent, and [storageConsent] is null when the user has only given
+/// authorization consent. Both are non-null when the user has given both.
 class ConsentHistoryResult {
+  /// User identifier (full name) for this consent history.
   final String userFullname;
-  final ConsentRecord consent;
-  final ConsentRecord storageConsent;
 
+  /// Authorization consent record. Null if the user has never given
+  /// authorization consent (only storage consent exists).
+  final ConsentRecord? consent;
+
+  /// Storage consent record. Null if the user has never given storage consent
+  /// (only authorization consent exists).
+  final ConsentRecord? storageConsent;
+
+  /// Creates a result with the given [userFullname] and optional consent records.
   const ConsentHistoryResult({
     required this.userFullname,
-    required this.consent,
-    required this.storageConsent,
+    this.consent,
+    this.storageConsent,
   });
 
+  /// Parses [ConsentHistoryResult] from the API JSON shape.
   factory ConsentHistoryResult.fromJson(Map<String, dynamic> json) =>
       ConsentHistoryResult(
         userFullname: json['user_fullname'] as String,
-        consent:
-            ConsentRecord.fromJson(json['consent'] as Map<String, dynamic>),
-        storageConsent: ConsentRecord.fromJson(
-            json['storage_consent'] as Map<String, dynamic>),
+        consent: json['consent'] != null
+            ? ConsentRecord.fromJson(json['consent'] as Map<String, dynamic>)
+            : null,
+        storageConsent: json['storage_consent'] != null
+            ? ConsentRecord.fromJson(
+                json['storage_consent'] as Map<String, dynamic>)
+            : null,
       );
 }
