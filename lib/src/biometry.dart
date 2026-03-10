@@ -48,26 +48,48 @@ class Biometry {
   /// Geolocation information to be included in transactions.
   BiometryGeoLocation? _geoLocation;
 
+  /// Client app name sent as `X-Client-App` on API gateway requests.
+  final String? _clientAppName;
+
+  /// Client app version sent as `X-Client-App-Version` on API gateway requests.
+  final String? _clientAppVersion;
+
   Biometry._(
     this._token,
     this._client,
     this.sessionId,
     this._fullName, {
     BiometryGeoLocation? geoLocation,
-  }) : _geoLocation = geoLocation;
+    String? clientAppName,
+    String? clientAppVersion,
+  })  : _geoLocation = geoLocation,
+        _clientAppName = clientAppName,
+        _clientAppVersion = clientAppVersion;
 
   /// Initializes the Biometry class with a token, full name and an optional HTTP client.
+  ///
+  /// [clientAppName] and [clientAppVersion] are optional. When provided, they
+  /// are sent as `X-Client-App` and `X-Client-App-Version` headers on every
+  /// request to the API gateway.
   static Future<Biometry> initialize({
     required String token,
     required String fullName,
     http.Client? client,
     BiometryGeoLocation? geoLocation,
+    String? clientAppName,
+    String? clientAppVersion,
   }) async {
     await _configureAudioSession();
 
     final http.Client httpClient = client ?? http.Client();
-    String id = await _fetchSessionId(token, httpClient, fullName,
-        geoLocation: geoLocation);
+    String id = await _fetchSessionId(
+      token,
+      httpClient,
+      fullName,
+      geoLocation: geoLocation,
+      clientAppName: clientAppName,
+      clientAppVersion: clientAppVersion,
+    );
     final rand = Random.secure();
 
     final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
@@ -75,8 +97,15 @@ class Biometry {
     Biometry._phrase = digits.join();
 
     debugPrint("Phrase: $_phrase");
-    return Biometry._(token, httpClient, id, fullName,
-        geoLocation: geoLocation);
+    return Biometry._(
+      token,
+      httpClient,
+      id,
+      fullName,
+      geoLocation: geoLocation,
+      clientAppName: clientAppName,
+      clientAppVersion: clientAppVersion,
+    );
   }
 
   /// Sets or updates the geolocation information.
@@ -124,6 +153,8 @@ class Biometry {
     http.Client client,
     String fullName, {
     BiometryGeoLocation? geoLocation,
+    String? clientAppName,
+    String? clientAppVersion,
   }) async {
     final uri = Uri.parse('$_apiGateway/sessions/start?warmup=true');
 
@@ -134,6 +165,12 @@ class Biometry {
     if (geoLocation != null) {
       final geoJson = jsonEncode(geoLocation.toJson());
       request.headers['X-Geo-Location'] = geoJson;
+    }
+    if (clientAppName != null && clientAppName.isNotEmpty) {
+      request.headers['X-Client-App'] = clientAppName;
+    }
+    if (clientAppVersion != null && clientAppVersion.isNotEmpty) {
+      request.headers['X-Client-App-Version'] = clientAppVersion;
     }
 
     final response = await client.send(request);
@@ -160,6 +197,15 @@ class Biometry {
     }
   }
 
+  void _addClientAppHeaders(http.BaseRequest request) {
+    if (_clientAppName != null && _clientAppName!.isNotEmpty) {
+      request.headers['X-Client-App'] = _clientAppName!;
+    }
+    if (_clientAppVersion != null && _clientAppVersion!.isNotEmpty) {
+      request.headers['X-Client-App-Version'] = _clientAppVersion!;
+    }
+  }
+
   /// Ends the session by sending a POST request to the API.
   Future<http.Response> endSession() async {
     final uri = Uri.parse('$_apiGateway/sessions/end/$sessionId');
@@ -169,6 +215,7 @@ class Biometry {
       ..headers['X-User-Fullname'] = _fullName;
 
     _addGeoLocationHeader(request);
+    _addClientAppHeaders(request);
 
     final response = await _client.send(request);
     if (response.statusCode == 200) {
@@ -296,6 +343,7 @@ class Biometry {
     }
     request.headers['X-Device-Info'] = deviceInfoJson;
     _addGeoLocationHeader(request);
+    _addClientAppHeaders(request);
 
     if (kDebugMode) {
       print('Enrol Face request: $request');
@@ -353,6 +401,7 @@ class Biometry {
     }
     request.headers['X-Device-Info'] = deviceInfoJson;
     _addGeoLocationHeader(request);
+    _addClientAppHeaders(request);
 
     if (kDebugMode) {
       print('Enrol Voice request: $request');
@@ -419,6 +468,7 @@ class Biometry {
 
     request.headers['X-Device-Info'] = deviceInfoJson;
     _addGeoLocationHeader(request);
+    _addClientAppHeaders(request);
 
     // Send the request and wait for the response stream to complete.
     final streamedResponse = await _client.send(request);
@@ -486,6 +536,7 @@ class Biometry {
     }
     request.headers['X-Device-Info'] = deviceInfoJson;
     _addGeoLocationHeader(request);
+    _addClientAppHeaders(request);
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
@@ -547,6 +598,7 @@ class Biometry {
 
     request.headers['X-Device-Info'] = deviceInfoJson;
     _addGeoLocationHeader(request);
+    _addClientAppHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
