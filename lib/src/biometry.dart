@@ -233,43 +233,39 @@ class Biometry {
 
   /// Scans a document using the `flutter_doc_scanner` plugin.
   ///
-  /// By default, it fetches a PDF for Android and a PNG for iOS.
-  ///
   /// Returns:
   /// - A `String` representing the path to the scanned document.
-  /// - An empty `String` if the scanning fails or no document is found.
+  /// - An empty `String` if the user cancelled or no document was found.
   ///
   /// Throws:
-  /// - `PlatformException` if the scanning process fails.
+  /// - `DocScanException` if the scanning process fails.
   Future<String> scanDocument() async {
-    dynamic scannedDocuments;
     try {
-      scannedDocuments =
-          await FlutterDocScanner().getScannedDocumentAsImages(page: 1) ??
-              'Unknown platform documents';
-    } on PlatformException catch (_) {
-      scannedDocuments = 'Failed to get scanned documents.';
-    }
-    // ios: scannedDocuments is a list of file paths
-    if (scannedDocuments is List && scannedDocuments.isNotEmpty) {
-      return scannedDocuments[0];
-    }
-    // android: scannedDocuments is a map with a string value for 'uri'
-    if (scannedDocuments is Map && scannedDocuments.containsKey('Uri')) {
-      final uriString = scannedDocuments['Uri'];
-      if (uriString is String) {
-        final uriMatch = RegExp(r'imageUri=([^}]+)').firstMatch(uriString);
-        if (uriMatch != null) {
-          final fileUri = uriMatch.group(1);
-          return fileUri ?? "";
-        } else {
-          debugPrint("Regex did not match in uriString: $uriString");
-        }
-      } else {
-        debugPrint("uriString is not a String: $uriString");
+      final result =
+          await FlutterDocScanner().getScannedDocumentAsImages(page: 1);
+
+      // null means the user cancelled the scan
+      if (result == null) {
+        debugPrint('scanDocument: user cancelled');
+        return '';
       }
+
+      if (result.images.isNotEmpty) {
+        final path = result.images.first;
+        debugPrint('scanDocument: got path $path');
+        return path;
+      }
+
+      debugPrint('scanDocument: ImageScanResult contained no images');
+      return '';
+    } on DocScanException catch (e) {
+      debugPrint('scanDocument: DocScanException ${e.code} - ${e.message}');
+      return '';
+    } on PlatformException catch (e) {
+      // Fallback for any older plugin version still sending PlatformException
+      debugPrint('scanDocument: PlatformException ${e.code} - ${e.message}');
+      return '';
     }
-    return "";
   }
 
   /// Returns the phrase as a string of words.

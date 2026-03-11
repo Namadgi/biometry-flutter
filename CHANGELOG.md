@@ -1,3 +1,11 @@
+## [1.0.10] - 2026-03-11
+
+### Fixed
+- **scanDocument():** Fixed "no image path received" exception by updating the document scanning logic to support the breaking API changes in `flutter_doc_scanner` 0.0.17+ (typed `ImageScanResult` return).
+
+### Changed
+- Updated `flutter_doc_scanner` dependency constraint to `^0.0.18`.
+
 ## [1.0.9] - 2026-03-10
 
 ### Added
