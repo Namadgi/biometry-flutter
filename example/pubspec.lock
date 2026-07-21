@@ -137,10 +137,10 @@ packages:
     dependency: transitive
     description:
       name: flutter_doc_scanner
-      sha256: "4a1dd77d37004ee8b9bdbb7437b0c970706d51b74ddd9806d491420d066d255d"
+      sha256: bd292288b64e1ec0ad9ac0b04454cef104fea9d63f7408cb70170591f92e11c6
       url: "https://pub.dev"
     source: hosted
-    version: "0.0.16"
+    version: "0.0.21"
   flutter_plugin_android_lifecycle:
     dependency: transitive
     description:
