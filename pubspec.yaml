@@ -10,16 +10,13 @@ dependencies:
   audio_session: ^0.2.2
   camera: ^0.11.1
   camera_platform_interface: ^2.10.0
-  device_info_plus: ^11.4.0
   flutter:
     sdk: flutter
   flutter_doc_scanner: ^0.0.16
   http: ^1.4.0
   http_parser: ^4.1.2
   path_provider: ^2.1.5
-  recase: ^4.1.0
   speech_to_text: ^7.0.0
-  uuid: ^4.5.1
   video_compress: ^3.1.4
 
 dev_dependencies:

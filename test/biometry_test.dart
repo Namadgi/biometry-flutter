@@ -26,19 +26,20 @@ void main() {
       when(mockFile.path).thenReturn('test/video.mp4');
       when(mockFile.exists()).thenAnswer((_) async => true);
 
-      // Stub streamed requests (initialize + processVideo)
+      // Stub streamed requests (initialize + livenessCheck)
       when(mockHttpClient.send(any)).thenAnswer((invocation) async {
         final request = invocation.positionalArguments[0] as http.BaseRequest;
         final url = request.url.toString();
 
         if (url ==
-            'https://api.biometrysolutions.com/api-gateway/sessions/start?warmup=true') {
+            'https://api.biometrysolutions.com/api-gateway/v2/sessions?warmup=true') {
           return http.StreamedResponse(
-            Stream.fromIterable(['{"data":"session-id-123"}'.codeUnits]),
+            Stream.fromIterable(
+                ['{"data":{"session_id":"session-id-123"}}'.codeUnits]),
             200,
           );
         } else if (url ==
-            'https://api.biometrysolutions.com/api-gateway/process-video') {
+            'https://api.biometrysolutions.com/api-gateway/v2/liveness') {
           return http.StreamedResponse(
             Stream.fromIterable(['{"status":"success"}'.codeUnits]),
             200,
@@ -48,14 +49,11 @@ void main() {
         fail('Unexpected URL call: $url');
       });
 
-      // Stub GET requests (getConsentHistory)
+      // Stub GET requests (getConsentApprovals)
       when(mockHttpClient.get(any, headers: anyNamed('headers')))
           .thenAnswer((_) async => http.Response(
-                '{"data":{"user_fullname":"John Doe",'
-                '"consent":{"is_consent_given":true,"history":[],'
-                '"created_at":"2024-01-15T10:30:00Z","updated_at":"2024-01-15T10:30:00Z"},'
-                '"storage_consent":{"is_consent_given":true,"history":[],'
-                '"created_at":"2024-01-15T10:30:00Z","updated_at":"2024-01-15T10:30:00Z"}}}',
+                '{"data":[{"consent_id":"consent-abc","user_id":"john-doe",'
+                '"approved_at":"2024-01-15T10:30:00Z"}]}',
                 200,
               ));
 
@@ -63,6 +61,7 @@ void main() {
       biometry = await Biometry.initialize(
         token: 'test-token',
         client: mockHttpClient,
+        userId: 'john-doe',
         fullName: 'John Doe',
       );
     });
@@ -76,9 +75,9 @@ void main() {
           reason: 'Leading zero was dropped after parsing as int');
     });
 
-    test('processVideo returns success response', () async {
+    test('livenessCheck returns success response', () async {
       // Act
-      final response = await biometry.processVideo(videoFile: mockFile);
+      final response = await biometry.livenessCheck(video: mockFile);
 
       // Assert
       expect(response.statusCode, 200);
