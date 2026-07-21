@@ -66,8 +66,7 @@ void main() {
           );
         } else if (url == '$v2Base/documents/check') {
           return http.StreamedResponse(
-            bodyStream(
-                '{"data":{"portrait_photo":"$validPortraitPhotoBase64",'
+            bodyStream('{"data":{"portrait_photo":"$validPortraitPhotoBase64",'
                 '"first_name":"John","last_name":"Doe"}}'),
             200,
           );
@@ -88,8 +87,7 @@ void main() {
           );
         } else if (url == '$v2Base/liveness') {
           return http.StreamedResponse(
-            bodyStream(
-                '{"data":{"face_liveness_detection":{"score":0.99}}}'),
+            bodyStream('{"data":{"face_liveness_detection":{"score":0.99}}}'),
             200,
           );
         } else if (url == '$v2Base/face-verify') {
@@ -176,10 +174,8 @@ void main() {
           () async {
         http.Request? captured;
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
-          if (request.url.toString() ==
-              '$v2Base/sessions/session-id-123/end') {
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
+          if (request.url.toString() == '$v2Base/sessions/session-id-123/end') {
             captured = request as http.Request;
             return http.StreamedResponse(bodyStream('{"meta":{}}'), 200);
           }
@@ -207,8 +203,7 @@ void main() {
       test('sends the session ID in the multipart request field', () async {
         http.MultipartRequest? captured;
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/documents/check') {
             captured = request as http.MultipartRequest;
             return http.StreamedResponse(
@@ -231,8 +226,7 @@ void main() {
 
       test('throws when the API returns a non-2xx status', () async {
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/documents/check') {
             return http.StreamedResponse(
                 bodyStream('{"error":"unprocessable"}'), 422);
@@ -262,8 +256,7 @@ void main() {
 
         http.MultipartRequest? captured;
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/enrollments/face') {
             captured = request as http.MultipartRequest;
             return http.StreamedResponse(
@@ -288,8 +281,7 @@ void main() {
         await biometry.docAuth();
 
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/enrollments/face') {
             return http.StreamedResponse(bodyStream('{"error":"bad"}'), 403);
           }
@@ -310,8 +302,7 @@ void main() {
           () async {
         http.MultipartRequest? captured;
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/enrollments/voice') {
             captured = request as http.MultipartRequest;
             return http.StreamedResponse(
@@ -333,8 +324,7 @@ void main() {
 
       test('throws when the API returns a non-2xx status', () async {
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/enrollments/voice') {
             return http.StreamedResponse(bodyStream('{"error":"bad"}'), 400);
           }
@@ -375,8 +365,7 @@ void main() {
 
         http.MultipartRequest? captured;
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/face-match') {
             captured = request as http.MultipartRequest;
             return http.StreamedResponse(
@@ -404,8 +393,7 @@ void main() {
         await biometry.docAuth();
 
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/face-match') {
             return http.StreamedResponse(
                 bodyStream('{"error":"unprocessable"}'), 422);
@@ -427,13 +415,11 @@ void main() {
       test('sends excluded services when provided', () async {
         http.MultipartRequest? captured;
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/liveness') {
             captured = request as http.MultipartRequest;
             return http.StreamedResponse(
-              bodyStream(
-                  '{"data":{"face_liveness_detection":{"score":0.99}}}'),
+              bodyStream('{"data":{"face_liveness_detection":{"score":0.99}}}'),
               200,
             );
           }
@@ -454,8 +440,7 @@ void main() {
 
       test('throws when the API returns a non-2xx status', () async {
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/liveness') {
             return http.StreamedResponse(
                 bodyStream('{"error":"unprocessable"}'), 422);
@@ -476,8 +461,7 @@ void main() {
 
       test('throws when the API returns a non-2xx status', () async {
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/face-verify') {
             return http.StreamedResponse(bodyStream('{"error":"bad"}'), 404);
           }
@@ -497,8 +481,7 @@ void main() {
 
       test('throws when the API returns a non-2xx status', () async {
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/voice-verify') {
             return http.StreamedResponse(bodyStream('{"error":"bad"}'), 404);
           }
@@ -511,16 +494,14 @@ void main() {
     });
 
     group('deepfakeCheck', () {
-      test('submits the video and returns the created check (201)',
-          () async {
+      test('submits the video and returns the created check (201)', () async {
         final response = await biometry.deepfakeCheck(video: mockFile);
         expect(response.statusCode, 201);
       });
 
       test('throws when the API returns a non-2xx/201 status', () async {
         when(mockHttpClient.send(any)).thenAnswer((invocation) async {
-          final request =
-              invocation.positionalArguments[0] as http.BaseRequest;
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
           if (request.url.toString() == '$v2Base/deepfake/checks') {
             return http.StreamedResponse(
                 bodyStream('{"error":"unprocessable"}'), 422);
@@ -546,20 +527,18 @@ void main() {
         expect(approvals, hasLength(1));
         expect(approvals.first.consentId, 'consent-abc');
         expect(approvals.first.userId, 'john-doe');
-        expect(approvals.first.approvedAt, DateTime.parse('2024-01-15T10:30:00Z'));
+        expect(
+            approvals.first.approvedAt, DateTime.parse('2024-01-15T10:30:00Z'));
       });
 
       test('getConsentApprovals throws when the API call fails', () async {
-        when(mockHttpClient.get(any, headers: anyNamed('headers')))
-            .thenAnswer(
-                (_) async => http.Response('{"error":"unauthorized"}', 401));
+        when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
+            (_) async => http.Response('{"error":"unauthorized"}', 401));
 
-        expect(
-            () => biometry.getConsentApprovals(), throwsA(isA<Exception>()));
+        expect(() => biometry.getConsentApprovals(), throwsA(isA<Exception>()));
       });
 
-      test('assertConsent passes when the consent has been approved',
-          () async {
+      test('assertConsent passes when the consent has been approved', () async {
         await expectLater(
             biometry.assertConsent(consentId: 'consent-abc'), completes);
       });
@@ -572,8 +551,7 @@ void main() {
         );
       });
 
-      test('assertConsent reuses cached approvals on a second call',
-          () async {
+      test('assertConsent reuses cached approvals on a second call', () async {
         await biometry.assertConsent(consentId: 'consent-abc');
 
         // If this call hit the network again it would fail — the shared
@@ -581,8 +559,7 @@ void main() {
         // set up in setUp, and this proves no second GET is required.
         await expectLater(
             biometry.assertConsent(consentId: 'consent-abc'), completes);
-        verify(mockHttpClient.get(any, headers: anyNamed('headers')))
-            .called(1);
+        verify(mockHttpClient.get(any, headers: anyNamed('headers'))).called(1);
       });
     });
 

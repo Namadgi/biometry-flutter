@@ -31,7 +31,7 @@ class FakeXFile implements XFile {
 }
 
 class TestBiometryScannerWidget extends BiometryScannerWidget {
-  TestBiometryScannerWidget({
+  const TestBiometryScannerWidget({
     super.key,
     required super.phrase,
     required super.onCapture,
@@ -45,7 +45,7 @@ class TestBiometryScannerWidget extends BiometryScannerWidget {
 class TestBiometryScannerWidgetState extends BiometryScannerWidgetState {
   @override
   Future<File> compressVideo(String videoPath) async {
-    print('mock compressVideo called for path: $videoPath');
+    debugPrint('mock compressVideo called for path: $videoPath');
     return File(videoPath);
   }
 }
@@ -115,7 +115,7 @@ void main() {
 
       File? capturedFile;
       void onCaptureCallback(File file) {
-        print('onCapture called with file: ${file.path}');
+        debugPrint('onCapture called with file: ${file.path}');
         capturedFile = file;
       }
 

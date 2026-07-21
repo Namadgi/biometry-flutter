@@ -19,7 +19,7 @@ class AppTheme {
     borderRadius: BorderRadius.circular(12),
     boxShadow: [
       BoxShadow(
-        color: Colors.black.withOpacity(0.2),
+        color: Colors.black.withValues(alpha: 0.2),
         blurRadius: 4,
         offset: Offset(0, 2),
       ),
@@ -32,7 +32,7 @@ void main() {
 }
 
 class BiometryApp extends StatelessWidget {
-  const BiometryApp({Key? key}) : super(key: key);
+  const BiometryApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -43,7 +43,7 @@ class BiometryApp extends StatelessWidget {
 }
 
 class BiometryHomePage extends StatefulWidget {
-  const BiometryHomePage({Key? key}) : super(key: key);
+  const BiometryHomePage({super.key});
 
   @override
   BiometryHomePageState createState() => BiometryHomePageState();
@@ -180,8 +180,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
       return;
     }
     await _executeBiometricOperation(
-      operationCallback: () =>
-          _biometry!.approveConsent(consentId: consentId),
+      operationCallback: () => _biometry!.approveConsent(consentId: consentId),
       successMessage: 'Consent approved successfully!',
       errorMessage: 'Failed to approve consent',
     );
@@ -221,8 +220,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
       return 'No consent approvals recorded yet.';
     }
     final entries = approvals
-        .map((a) =>
-            '  • ${a.consentId} — approved on ${a.approvedAt.toLocal()}')
+        .map(
+            (a) => '  • ${a.consentId} — approved on ${a.approvedAt.toLocal()}')
         .join('\n');
     return 'Consent Approvals for ${_biometry!.fullName}\n\n$entries';
   }
@@ -244,8 +243,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _livenessCheck() async {
     await _executeBiometricOperation(
-      operationCallback: () =>
-          _biometry!.livenessCheck(video: _capturedVideo!),
+      operationCallback: () => _biometry!.livenessCheck(video: _capturedVideo!),
       successMessage: 'Liveness check completed!',
       errorMessage: 'Failed to check liveness',
       requireVideo: true,
@@ -272,8 +270,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _deepfakeCheck() async {
     await _executeBiometricOperation(
-      operationCallback: () =>
-          _biometry!.deepfakeCheck(video: _capturedVideo!),
+      operationCallback: () => _biometry!.deepfakeCheck(video: _capturedVideo!),
       successMessage: 'Deepfake check submitted!',
       errorMessage: 'Failed to submit deepfake check',
       requireVideo: true,
@@ -652,7 +649,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
                               label: 'Approve Consent',
                               icon: Icons.check_circle,
                               onPressed: _approveConsent,
-                              tooltip: 'Record approval of the consent template above',
+                              tooltip:
+                                  'Record approval of the consent template above',
                             ),
                             _buildActionButton(
                               label: 'View Consent Approvals',
@@ -822,7 +820,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
+                      color: Colors.black.withValues(alpha: 0.2),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
