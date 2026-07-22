@@ -22,7 +22,7 @@ void main() {
   const validPortraitPhotoBase64 = 'aGVsbG8=';
 
   Stream<List<int>> bodyStream(String json) =>
-      Stream.fromIterable([json.codeUnits]);
+      Stream.fromIterable([utf8.encode(json)]);
 
   final originalPathProviderPlatform = PathProviderPlatform.instance;
 

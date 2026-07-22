@@ -76,7 +76,9 @@ class Biometry {
     final digits = allDigits.take(7).toList();
     Biometry._phrase = digits.join();
 
-    debugPrint("Phrase: $_phrase");
+    if (kDebugMode) {
+      debugPrint("Phrase: $_phrase");
+    }
     return Biometry._(token, httpClient, id, userId, fullName);
   }
 
@@ -93,7 +95,9 @@ class Biometry {
     final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
     final digits = allDigits.take(7).toList();
     _phrase = digits.join();
-    debugPrint("Phrase: $_phrase");
+    if (kDebugMode) {
+      debugPrint("Phrase: $_phrase");
+    }
   }
 
   static Future<void> _configureAudioSession() async {
@@ -251,8 +255,10 @@ class Biometry {
         await http.MultipartFile.fromPath(
           'face',
           _faceImagePath!,
-          contentType: MediaType(
-              'image', _faceImagePath!.split('.').last), // Dynamic content type
+          contentType: _faceImagePath!.toLowerCase().endsWith('.jpg') ||
+                  _faceImagePath!.toLowerCase().endsWith('.jpeg')
+              ? MediaType('image', 'jpeg')
+              : MediaType('image', 'png'),
         ),
       );
 
@@ -355,7 +361,10 @@ class Biometry {
       ..files.add(await http.MultipartFile.fromPath(
         'document',
         filePath,
-        contentType: MediaType('image', 'png'),
+        contentType: filePath.toLowerCase().endsWith('.jpg') ||
+                filePath.toLowerCase().endsWith('.jpeg')
+            ? MediaType('image', 'jpeg')
+            : MediaType('image', 'png'),
       ));
 
     // Send the request and wait for the response stream to complete.
@@ -415,7 +424,8 @@ class Biometry {
       request.files.add(await http.MultipartFile.fromPath(
         'video',
         video.path,
-        contentType: MediaType('video', video.path.split('.').last),
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
     }
 
@@ -471,7 +481,8 @@ class Biometry {
       ..files.add(await http.MultipartFile.fromPath(
         'video',
         video.path,
-        contentType: MediaType('video', video.path.split('.').last),
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
     final streamedResponse = await _client.send(request);
@@ -503,7 +514,8 @@ class Biometry {
       ..files.add(await http.MultipartFile.fromPath(
         'video',
         video.path,
-        contentType: MediaType('video', video.path.split('.').last),
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
     final streamedResponse = await _client.send(request);
@@ -536,7 +548,8 @@ class Biometry {
       ..files.add(await http.MultipartFile.fromPath(
         'voice',
         video.path,
-        contentType: MediaType('video', video.path.split('.').last),
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
     final streamedResponse = await _client.send(request);
@@ -568,7 +581,8 @@ class Biometry {
       ..files.add(await http.MultipartFile.fromPath(
         'video',
         video.path,
-        contentType: MediaType('video', video.path.split('.').last),
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
     final streamedResponse = await _client.send(request);
@@ -630,7 +644,8 @@ class Biometry {
         return;
       }
 
-      dev.log('Portrait photo base64: $portraitPhotoBase64');
+      dev.log(
+          'Portrait photo received (${portraitPhotoBase64.length} base64 chars)');
 
       final imageBytes = base64Decode(portraitPhotoBase64);
 
