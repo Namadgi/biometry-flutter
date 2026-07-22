@@ -140,11 +140,11 @@ class BiometryScannerWidgetState extends State<BiometryScannerWidget>
     );
 
     // Get the compressed file size
-    final compressedFileSize = compressedVideo!.file?.lengthSync();
+    final compressedFileSize = compressedVideo?.file?.lengthSync();
     debugPrint(
         'Compressed video size: $compressedFileSize bytes... $videoPath');
 
-    return compressedVideo.file;
+    return compressedVideo?.file;
   }
 
   @override

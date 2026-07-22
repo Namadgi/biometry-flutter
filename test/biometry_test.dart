@@ -24,8 +24,14 @@ void main() {
   Stream<List<int>> bodyStream(String json) =>
       Stream.fromIterable([json.codeUnits]);
 
+  final originalPathProviderPlatform = PathProviderPlatform.instance;
+
   setUpAll(() {
     PathProviderPlatform.instance = _FakePathProviderPlatform();
+  });
+
+  tearDownAll(() {
+    PathProviderPlatform.instance = originalPathProviderPlatform;
   });
 
   group('Biometry', () {
@@ -158,6 +164,23 @@ void main() {
             userId: 'john-doe',
             fullName: 'John Doe',
             client: failingClient,
+          ),
+          throwsA(isA<Exception>()),
+        );
+      });
+
+      test('throws when the response is 200 but session_id is missing',
+          () async {
+        final malformedClient = MockClient();
+        when(malformedClient.send(any)).thenAnswer(
+            (_) async => http.StreamedResponse(bodyStream('{"data":{}}'), 200));
+
+        expect(
+          () => Biometry.initialize(
+            token: 'test-token',
+            userId: 'john-doe',
+            fullName: 'John Doe',
+            client: malformedClient,
           ),
           throwsA(isA<Exception>()),
         );
@@ -521,6 +544,36 @@ void main() {
         expect(response.statusCode, 200);
       });
 
+      test('percent-encodes reserved characters in the consent ID', () async {
+        Uri? capturedUri;
+        when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
+          if (request.url.path.contains('/consents/')) {
+            capturedUri = request.url;
+            return http.StreamedResponse(bodyStream('{"meta":{}}'), 200);
+          }
+          fail('Unexpected URL call: ${request.url}');
+        });
+
+        await biometry.approveConsent(consentId: 'consent with/slash');
+
+        expect(capturedUri, isNotNull);
+        // A raw '/' in consentId would otherwise split into an extra path
+        // segment; pathSegments decodes each segment back, so a correctly
+        // encoded value still shows up as a single segment here.
+        expect(
+          capturedUri!.pathSegments,
+          [
+            'api-gateway',
+            'v2',
+            'consents',
+            'consent with/slash',
+            'approve',
+            'john-doe'
+          ],
+        );
+      });
+
       test('getConsentApprovals returns the recorded approvals', () async {
         final approvals = await biometry.getConsentApprovals();
 
@@ -554,9 +607,9 @@ void main() {
       test('assertConsent reuses cached approvals on a second call', () async {
         await biometry.assertConsent(consentId: 'consent-abc');
 
-        // If this call hit the network again it would fail — the shared
-        // stub above only answers the GET call once per `when` registration
-        // set up in setUp, and this proves no second GET is required.
+        // The real assertion is the verify() below: it confirms the second
+        // call served from the cached approvals list instead of hitting the
+        // network again.
         await expectLater(
             biometry.assertConsent(consentId: 'consent-abc'), completes);
         verify(mockHttpClient.get(any, headers: anyNamed('headers'))).called(1);

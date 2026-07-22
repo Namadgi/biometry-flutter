@@ -1,4 +1,5 @@
 build
+.agent-context.md
 example/.flutter-plugins
 example/.idea
 example/.pub-cache

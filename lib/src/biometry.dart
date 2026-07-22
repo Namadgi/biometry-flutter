@@ -132,9 +132,12 @@ class Biometry {
     if (response.statusCode == 200) {
       final jsonResponse = jsonDecode(responseBody.body);
       final dataRaw = jsonResponse['data'];
-      String id = '';
-      if (dataRaw is Map<String, dynamic>) {
-        id = dataRaw['session_id'] as String? ?? '';
+      final id = dataRaw is Map<String, dynamic>
+          ? dataRaw['session_id'] as String?
+          : null;
+      if (id == null || id.isEmpty) {
+        throw Exception(
+            'Failed to retrieve session ID: missing session_id in response: ${responseBody.body}');
       }
       if (kDebugMode) {
         debugPrint("Session ID: $id");
@@ -359,14 +362,13 @@ class Biometry {
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
-    // Process the face image from the response.
-    await _processFaceImage(response);
-
-    // Optional: Check the response status code.
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
           'DocAuth failed with status code: ${response.statusCode}');
     }
+
+    // Process the face image from the response.
+    await _processFaceImage(response);
 
     return response;
   }
@@ -584,8 +586,8 @@ class Biometry {
   /// `allowConsent(consent: false)`, there is currently no way to withdraw
   /// a recorded approval through this API.
   Future<http.Response> approveConsent({required String consentId}) async {
-    final uri =
-        Uri.parse('$_apiGatewayV2/consents/$consentId/approve/$_userId');
+    final uri = Uri.parse(
+        '$_apiGatewayV2/consents/${Uri.encodeComponent(consentId)}/approve/${Uri.encodeComponent(_userId)}');
 
     final request = http.Request('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token';
@@ -694,7 +696,8 @@ class Biometry {
 
   /// Retrieves all consent approvals recorded for the current user.
   Future<List<ConsentApproval>> getConsentApprovals() async {
-    final uri = Uri.parse('$_apiGatewayV2/consents/my-approvals/$_userId');
+    final uri = Uri.parse(
+        '$_apiGatewayV2/consents/my-approvals/${Uri.encodeComponent(_userId)}');
 
     final response = await _client.get(
       uri,

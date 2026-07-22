@@ -189,7 +189,8 @@ await biometry.assertConsent(consentId: 'your-consent-template-id');
 final response = await biometry.endSession();
 
 // Optionally run a SIM-swap fraud check for a phone number when ending.
-final response = await biometry.endSession(phoneNumber: '+15551234567');
+final simSwapResponse =
+    await biometry.endSession(phoneNumber: '+15551234567');
 ```
 
 ## Example Application
