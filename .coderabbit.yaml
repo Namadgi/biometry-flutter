@@ -1,0 +1,46 @@
+# CodeRabbit Configuration
+# https://docs.coderabbit.ai/guides/configure-coderabbit
+language: "en-US"
+
+reviews:
+  # Review profile: chill (less nitpicky) or assertive (more feedback)
+  profile: chill
+
+  # Auto-generate PR titles with conventional commit format
+  auto_title_placeholder: "@coderabbitai title"
+  auto_title_instructions: "Format: \"<category>: <title>\". Category must be one
+    of: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
+    The category must be followed by a colon. Title should be concise (<= 80
+    chars). Example: \"feat: add v2 face-match endpoint\"."
+
+  request_changes_workflow: true
+
+  # Walkthrough settings
+  commit_status: false
+  collapse_walkthrough: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: true
+  suggested_reviewers: true
+  poem: false
+  review_status: false
+
+  # Exclude lockfiles and generated code (mockito-generated mocks) from
+  # review — they're not hand-written source and produce noise.
+  path_filters:
+    - "!**/*.lock"
+    - "!**/*.mocks.dart"
+
+  auto_review:
+    auto_incremental_review: true
+    drafts: false
+    enabled: true
+    base_branches: [ "master" ]
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - ".agent-context.md"
+      - "CONTRIBUTING.md"
