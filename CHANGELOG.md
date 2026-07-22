@@ -7,6 +7,7 @@
 - `docAuth()` accepts optional `provider` and `mrzProvider` overrides.
 - `endSession()` accepts an optional `phoneNumber` to run a SIM-swap fraud check when ending the session.
 - `approveConsent({consentId})` and `getConsentApprovals()`, with a new `ConsentApproval` model (`consentId`, `userId`, `approvedAt`).
+- `clientAppName` and `clientAppVersion` parameters on `Biometry.initialize()`, sent as `X-Client-App` / `X-Client-App-Version` headers on every request (carried forward from 1.0.9).
 
 ### Changed
 - **Migrated to the Biometry v2 REST API** (`/api-gateway/v2/*`) across every endpoint: sessions, document verification, face/voice enrollment, and face matching.
@@ -23,6 +24,25 @@
 - `scanDocument()` now correctly handles the `flutter_doc_scanner` ^0.0.21 API (`ImageScanResult` / `DocScanException`) instead of the old raw `List`/`Map`/`PlatformException` shape — the previous implementation silently returned an empty path on every scan against the actually-resolved plugin version.
 
 **This is a breaking release.** Every consumer needs to: pass `userId` to `initialize()`, replace `processVideo()` calls with the new granular verification methods, and migrate consent handling to the approval-based API. See the [README](README.md) for updated usage examples.
+
+## [1.0.10] - 2026-03-11
+
+_Retroactively added — published to pub.dev but missing from this changelog's history until now._
+
+### Fixed
+- **scanDocument():** Fixed "no image path received" exception by updating the document scanning logic to support the breaking API changes in `flutter_doc_scanner` 0.0.17+ (typed `ImageScanResult` return).
+
+### Changed
+- Updated `flutter_doc_scanner` dependency constraint to `^0.0.18`.
+
+## [1.0.9] - 2026-03-10
+
+_Retroactively added — published to pub.dev but missing from this changelog's history until now._
+
+### Added
+- **Client app metadata headers:** `Biometry.initialize()` accepts two new optional parameters — `clientAppName` and `clientAppVersion`. When provided, `X-Client-App` and `X-Client-App-Version` headers are attached to every request sent to the API gateway (session start/end, docAuth, processVideo, enrolFace, enrolVoice, faceMatch).
+
+No breaking changes.
 
 ## [1.0.8] - 2026-03-03
 
