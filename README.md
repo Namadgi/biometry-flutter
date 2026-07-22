@@ -93,6 +93,18 @@ final biometry = await Biometry.initialize(
 );
 ```
 
+Optionally, pass `clientAppName` and `clientAppVersion` to identify your app on every request (sent as the `X-Client-App` and `X-Client-App-Version` headers):
+
+```dart
+final biometry = await Biometry.initialize(
+  token: 'your-api-token',
+  userId: 'user-1234',
+  fullName: 'John Doe',
+  clientAppName: 'MyApp',
+  clientAppVersion: '3.2.1',
+);
+```
+
 ### Displaying the Verification Phrase
 
 ```dart

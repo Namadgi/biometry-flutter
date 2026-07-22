@@ -616,6 +616,61 @@ void main() {
       });
     });
 
+    group('client app headers', () {
+      test('are sent on session start and subsequent requests when provided',
+          () async {
+        final client = MockClient();
+        http.BaseRequest? capturedRequest;
+        when(client.send(any)).thenAnswer((invocation) async {
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
+          capturedRequest = request;
+          if (request.url.toString() == '$v2Base/sessions?warmup=true') {
+            return http.StreamedResponse(
+              bodyStream('{"data":{"session_id":"session-id-456"}}'),
+              200,
+            );
+          } else if (request.url.toString() == '$v2Base/liveness') {
+            return http.StreamedResponse(bodyStream('{"data":{}}'), 200);
+          }
+          fail('Unexpected URL call: ${request.url}');
+        });
+
+        final clientAppBiometry = await Biometry.initialize(
+          token: 'test-token',
+          userId: 'john-doe',
+          fullName: 'John Doe',
+          client: client,
+          clientAppName: 'MyApp',
+          clientAppVersion: '3.2.1',
+        );
+
+        expect(capturedRequest!.headers['X-Client-App'], 'MyApp');
+        expect(capturedRequest!.headers['X-Client-App-Version'], '3.2.1');
+
+        await clientAppBiometry.livenessCheck(video: mockFile);
+
+        expect(capturedRequest!.headers['X-Client-App'], 'MyApp');
+        expect(capturedRequest!.headers['X-Client-App-Version'], '3.2.1');
+      });
+
+      test('are omitted when not provided', () async {
+        http.BaseRequest? captured;
+        when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
+          if (request.url.toString() == '$v2Base/liveness') {
+            captured = request;
+            return http.StreamedResponse(bodyStream('{"data":{}}'), 200);
+          }
+          fail('Unexpected URL call: ${request.url}');
+        });
+
+        await biometry.livenessCheck(video: mockFile);
+
+        expect(captured!.headers.containsKey('X-Client-App'), isFalse);
+        expect(captured!.headers.containsKey('X-Client-App-Version'), isFalse);
+      });
+    });
+
     group('phrase utilities', () {
       test('phraseWords spells out each digit of the phrase', () {
         Biometry.resetPhrase();

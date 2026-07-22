@@ -51,25 +51,45 @@ class Biometry {
   /// Cached consent approvals, populated on first call to [assertConsent].
   List<ConsentApproval>? _cachedApprovals;
 
+  /// Client app name sent as `X-Client-App` on every API request.
+  final String? _clientAppName;
+
+  /// Client app version sent as `X-Client-App-Version` on every API request.
+  final String? _clientAppVersion;
+
   Biometry._(
     this._token,
     this._client,
     this.sessionId,
     this._userId,
-    this.fullName,
-  );
+    this.fullName, {
+    String? clientAppName,
+    String? clientAppVersion,
+  })  : _clientAppName = clientAppName,
+        _clientAppVersion = clientAppVersion;
 
   /// Initializes the Biometry class with a token, user ID, full name and an optional HTTP client.
+  ///
+  /// [clientAppName] and [clientAppVersion] are optional. When provided, they
+  /// are sent as `X-Client-App` and `X-Client-App-Version` headers on every
+  /// request to the API gateway.
   static Future<Biometry> initialize({
     required String token,
     required String userId,
     required String fullName,
     http.Client? client,
+    String? clientAppName,
+    String? clientAppVersion,
   }) async {
     await _configureAudioSession();
 
     final http.Client httpClient = client ?? http.Client();
-    String id = await _fetchSessionId(token, httpClient);
+    String id = await _fetchSessionId(
+      token,
+      httpClient,
+      clientAppName: clientAppName,
+      clientAppVersion: clientAppVersion,
+    );
     final rand = Random.secure();
 
     final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
@@ -79,7 +99,15 @@ class Biometry {
     if (kDebugMode) {
       debugPrint("Phrase: $_phrase");
     }
-    return Biometry._(token, httpClient, id, userId, fullName);
+    return Biometry._(
+      token,
+      httpClient,
+      id,
+      userId,
+      fullName,
+      clientAppName: clientAppName,
+      clientAppVersion: clientAppVersion,
+    );
   }
 
   /// Disposes the Biometry class.
@@ -121,12 +149,20 @@ class Biometry {
   /// Fetches a new session ID from the API.
   static Future<String> _fetchSessionId(
     String token,
-    http.Client client,
-  ) async {
+    http.Client client, {
+    String? clientAppName,
+    String? clientAppVersion,
+  }) async {
     final uri = Uri.parse('$_apiGatewayV2/sessions?warmup=true');
 
     final request = http.Request('POST', uri)
       ..headers['Authorization'] = 'Bearer $token';
+    if (clientAppName != null && clientAppName.isNotEmpty) {
+      request.headers['X-Client-App'] = clientAppName;
+    }
+    if (clientAppVersion != null && clientAppVersion.isNotEmpty) {
+      request.headers['X-Client-App-Version'] = clientAppVersion;
+    }
 
     final response = await client.send(request);
     final responseBody = await http.Response.fromStream(response);
@@ -169,6 +205,7 @@ class Biometry {
       ..headers['Content-Type'] = 'application/json'
       ..body = body;
 
+    _addClientAppHeaders(request);
     final response = await _client.send(request);
     if (response.statusCode == 200) {
       // clear all files in the temp directory
@@ -267,6 +304,7 @@ class Biometry {
       print('Headers: ${request.headers}');
     }
 
+    _addClientAppHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -315,6 +353,7 @@ class Biometry {
       print('Fields: ${request.fields}');
     }
 
+    _addClientAppHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -368,6 +407,7 @@ class Biometry {
       ));
 
     // Send the request and wait for the response stream to complete.
+    _addClientAppHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -434,6 +474,7 @@ class Biometry {
       print("use_session_video: $useSessionVideo");
     }
 
+    _addClientAppHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -485,6 +526,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
+    _addClientAppHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -518,6 +560,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
+    _addClientAppHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -552,6 +595,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
+    _addClientAppHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -585,6 +629,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
+    _addClientAppHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -607,6 +652,7 @@ class Biometry {
       ..headers['Authorization'] = 'Bearer $_token';
 
     debugPrint("request: $request");
+    _addClientAppHeaders(request);
     final response = await _client.send(request);
     final httpResponse = await http.Response.fromStream(response);
     if (httpResponse.statusCode >= 200 && httpResponse.statusCode < 300) {
@@ -688,6 +734,15 @@ class Biometry {
     }
   }
 
+  void _addClientAppHeaders(http.BaseRequest request) {
+    if (_clientAppName != null && _clientAppName!.isNotEmpty) {
+      request.headers['X-Client-App'] = _clientAppName!;
+    }
+    if (_clientAppVersion != null && _clientAppVersion!.isNotEmpty) {
+      request.headers['X-Client-App-Version'] = _clientAppVersion!;
+    }
+  }
+
   String _stripFileUriPrefix(String uri) {
     if (uri.startsWith('file://')) {
       return uri.replaceFirst('file://', '');
@@ -716,7 +771,13 @@ class Biometry {
 
     final response = await _client.get(
       uri,
-      headers: {'Authorization': 'Bearer $_token'},
+      headers: {
+        'Authorization': 'Bearer $_token',
+        if (_clientAppName != null && _clientAppName!.isNotEmpty)
+          'X-Client-App': _clientAppName!,
+        if (_clientAppVersion != null && _clientAppVersion!.isNotEmpty)
+          'X-Client-App-Version': _clientAppVersion!,
+      },
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
