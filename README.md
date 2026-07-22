@@ -1,16 +1,16 @@
 # Biometry
 
-**Biometry** is a secure, reliable Flutter package designed to simplify biometric authentication and identity verification in mobile applications. Leveraging advanced biometric technologies, Biometry integrates seamlessly with the Biometry API, supporting video-based facial and voice authentication, document verification, user consent management, and secure device telemetry.
+**Biometry** is a secure, reliable Flutter package designed to simplify biometric authentication and identity verification in mobile applications. Leveraging advanced biometric technologies, Biometry integrates seamlessly with the Biometry **v2 API**, supporting video-based facial and voice verification, liveness and deepfake detection, document verification, and consent management.
 
 This package is tailored specifically for developers building high-security applications, such as banking, finance, identity verification, and compliance-driven projects.
 
 ## Features
 
-- **Biometric Authentication**: Secure facial and voice recognition through video input.
+- **Biometric Verification**: Face and voice enrollment and verification through image/video input.
+- **Liveness & Deepfake Detection**: Anti-spoofing checks (face liveness, active speaker detection, visual speech recognition) and asynchronous deepfake analysis.
 - **Document Scanning & Verification**: Built-in scanning using the `flutter_doc_scanner` plugin.
 - **Biometric Scanner Widget**: User-friendly camera widget with guided video capture.
-- **Consent Management**: Integrated consent handling aligned with security best practices.
-- **Device Telemetry**: Automatic collection of comprehensive device metadata.
+- **Consent Management**: Approve and look up consent-template approvals recorded for a user.
 - **Extensible & Testable API**: Designed for ease of testing and extensibility.
 
 ## Getting Started
@@ -28,7 +28,7 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  biometry: ^1.0.6
+  biometry: ^2.0.0
 ```
 
 Run:
@@ -83,9 +83,12 @@ end
 
 ### Initializing Biometry
 
+`userId` is an opaque, customer-provided identity key (letters, digits, and `._:@-` only, max 128 characters) — it's what the Biometry API uses to identify the user, and is required. `fullName` is kept for your own display purposes only; it is never sent to the API.
+
 ```dart
 final biometry = await Biometry.initialize(
   token: 'your-api-token',
+  userId: 'user-1234',
   fullName: 'John Doe',
 );
 ```
@@ -102,13 +105,13 @@ print(biometry.phraseWords); // Example output: "One Two Three Four Five"
 BiometryScannerWidget(
   phrase: biometry.phraseWords,
   onCapture: (videoFile) async {
-    final response = await biometry.processVideo(videoFile: videoFile);
+    final response = await biometry.livenessCheck(video: videoFile);
     print(response.body);
   },
 );
 ```
 
-**Note**: If both consent and storage consent have been given before calling `processVideo()`, the backend will automatically perform enrollment (both face and voice) during video processing. Otherwise, it performs authentication only. When automatic enrollment is triggered, the response will include the `x-auto-enroll` header to indicate that enrollment has started (enrollment is asynchronous).
+The captured video can be run through any combination of [`livenessCheck`](#liveness-face-verification-voice-verification--deepfake-detection), `faceVerify`, `voiceVerify`, and `deepfakeCheck` depending on what your flow needs — they are independent calls, not a single bundled step.
 
 ### Document Authentication
 
@@ -117,11 +120,77 @@ final response = await biometry.docAuth();
 print(response.body);
 ```
 
-### Consent Handling
+`docAuth()` scans a document with the built-in scanner, sends it for verification, and — on success — extracts the document's portrait photo for use as the reference image in [`faceMatch`](#face-matching-against-a-reference-image). Optionally override the project's default providers:
 
 ```dart
-final response = await biometry.allowConsent(consent: true);
-print(response.body);
+final response = await biometry.docAuth(
+  provider: 'idscan',
+  mrzProvider: 'idscan',
+);
+```
+
+### Face & Voice Enrollment
+
+Enrolls a face (captured via `docAuth()`) or a voice recording against `userId`, for later verification:
+
+```dart
+final faceResponse = await biometry.enrolFace();
+
+final voiceResponse = await biometry.enrolVoice(videoFile: videoFile);
+```
+
+### Face Matching Against a Reference Image
+
+Matches the face extracted by `docAuth()` against either the session's video (default) or an explicit video you supply:
+
+```dart
+// Matches against the session video captured during this session.
+final response = await biometry.faceMatch();
+
+// Matches against a specific video instead.
+final response = await biometry.faceMatch(
+  video: videoFile,
+  useSessionVideo: false,
+);
+```
+
+### Liveness, Face Verification, Voice Verification & Deepfake Detection
+
+```dart
+final liveness = await biometry.livenessCheck(video: videoFile);
+
+final faceVerify = await biometry.faceVerify(video: videoFile);
+
+final voiceVerify = await biometry.voiceVerify(video: videoFile);
+
+final deepfake = await biometry.deepfakeCheck(video: videoFile);
+```
+
+`livenessCheck` accepts an optional `excludeServices` list (`face_liveness_detection`, `active_speaker_detection`, `visual_speech_recognition`, `face_recognition`, `voice_recognition`) to skip specific checks. `deepfakeCheck` submits the video for asynchronous analysis — the response body contains a check `status` (`pending`/`processing`/`completed`/`failed`), not an immediate verdict.
+
+### Consent Handling
+
+Consent templates (their `journey_id`, header, and body text) are configured in the Biometry dashboard, not by this SDK. The SDK only records and looks up **approvals** of an existing template ID:
+
+```dart
+final response = await biometry.approveConsent(consentId: 'your-consent-template-id');
+
+final approvals = await biometry.getConsentApprovals();
+
+// Throws if the user hasn't approved this consent template.
+await biometry.assertConsent(consentId: 'your-consent-template-id');
+```
+
+> **Note:** the v2 API does not currently support revoking a recorded approval.
+
+### Ending a Session
+
+```dart
+final response = await biometry.endSession();
+
+// Optionally run a SIM-swap fraud check for a phone number when ending.
+final simSwapResponse =
+    await biometry.endSession(phoneNumber: '+15551234567');
 ```
 
 ## Example Application
@@ -132,7 +201,6 @@ A complete, functional example application is provided within the [`example/`](e
 
 Biometry adheres to strict security standards:
 - Authentication via secure API tokens.
-- Collection and secure transmission of detailed device information.
 - Session-specific unique identifiers for enhanced traceability.
 - No persistent storage or logging of biometric data within the package.
 
@@ -150,4 +218,3 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 - [Biometry Homepage](https://biometrysolutions.com/)
 - [Developer Documentation](https://developer.biometrysolutions.com/overview/)
-

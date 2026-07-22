@@ -129,7 +129,7 @@ class BiometryScannerWidgetState extends State<BiometryScannerWidget>
   }
 
   /// Compresses the video file at the given path and returns the compressed file.
-  compressVideo(String videoPath) async {
+  Future<File?> compressVideo(String videoPath) async {
     // Get the original file size
     final originalFileSize = File(videoPath).lengthSync();
     debugPrint('Original video size: $originalFileSize bytes... $videoPath');
@@ -140,11 +140,11 @@ class BiometryScannerWidgetState extends State<BiometryScannerWidget>
     );
 
     // Get the compressed file size
-    final compressedFileSize = compressedVideo!.file?.lengthSync();
+    final compressedFileSize = compressedVideo?.file?.lengthSync();
     debugPrint(
         'Compressed video size: $compressedFileSize bytes... $videoPath');
 
-    return compressedVideo.file;
+    return compressedVideo?.file;
   }
 
   @override

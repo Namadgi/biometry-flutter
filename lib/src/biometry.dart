@@ -4,28 +4,30 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:audio_session/audio_session.dart';
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_doc_scanner/flutter_doc_scanner.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:recase/recase.dart';
-import 'package:uuid/uuid.dart';
 
-/// A class to handle biometry-related operations.
-///   - [initialize] - Initializes the Biometry class with a token, full name and an optional HTTP client.
+/// A class to handle biometry-related operations against the Biometry v2 API.
+///   - [initialize] - Initializes the Biometry class with a token, user ID, full name and an optional HTTP client.
 ///   - [scanDocument] - Scans a document using the flutter_doc_scanner plugin.
-///   - [docAuth] - Processes a document using the biometry service.
-///   - [processVideo] - Processes a video file using the biometry service. If both consents are given, automatically performs enrollment.
-///   - [enrolFace] - Enrolls a face using the biometry service (required if consents not given).
-///   - [enrolVoice] - Enrolls voice using the biometry service (required if consents not given).
-///   - [getConsentHistory] - Retrieves the full authorization and storage consent history for the current user.
+///   - [docAuth] - Verifies a document using the biometry service.
+///   - [enrolFace] - Enrolls a face using the biometry service.
+///   - [enrolVoice] - Enrolls voice using the biometry service.
+///   - [faceMatch] - Matches the enrolled/captured face against a live video or the session video.
+///   - [livenessCheck] - Checks face liveness, active speaker detection and visual speech recognition on a video.
+///   - [faceVerify] - Verifies a face in a video against the user's enrolled face template.
+///   - [voiceVerify] - Verifies a speaker in a video against the user's enrolled voice template.
+///   - [deepfakeCheck] - Submits a video for asynchronous deepfake analysis.
+///   - [approveConsent] - Records the user's approval of a consent template.
+///   - [getConsentApprovals] - Retrieves the user's recorded consent approvals.
+///   - [assertConsent] - Ensures the user has approved a given consent template.
 class Biometry {
   static const String _host = 'https://api.biometrysolutions.com';
   static const String _apiGateway = '$_host/api-gateway';
-  static const String _consentUrl = '$_host/api-consent';
+  static const String _apiGatewayV2 = '$_apiGateway/v2';
   static String _phrase = '';
 
   // Generate a 7-digit number with unique digits from 0-9.
@@ -36,52 +38,48 @@ class Biometry {
   /// The session ID to be sent with all requests to encapsulate usage.
   final String sessionId;
 
-  /// The full name of the user, stored for subsequent API calls.
-  final String _fullName;
+  /// The opaque, customer-provided identity key sent to the API as `user_id`.
+  final String _userId;
+
+  /// The full name of the user. Kept for display purposes only — it is not
+  /// transmitted to the v2 API, which identifies users by [_userId].
+  final String fullName;
 
   /// The path to the image of the person.
   String? _faceImagePath;
 
-  /// Cached consent state, populated on first call to [assertConsent].
-  ConsentHistoryResult? _cachedConsent;
-
-  /// Geolocation information to be included in transactions.
-  BiometryGeoLocation? _geoLocation;
+  /// Cached consent approvals, populated on first call to [assertConsent].
+  List<ConsentApproval>? _cachedApprovals;
 
   Biometry._(
     this._token,
     this._client,
     this.sessionId,
-    this._fullName, {
-    BiometryGeoLocation? geoLocation,
-  }) : _geoLocation = geoLocation;
+    this._userId,
+    this.fullName,
+  );
 
-  /// Initializes the Biometry class with a token, full name and an optional HTTP client.
+  /// Initializes the Biometry class with a token, user ID, full name and an optional HTTP client.
   static Future<Biometry> initialize({
     required String token,
+    required String userId,
     required String fullName,
     http.Client? client,
-    BiometryGeoLocation? geoLocation,
   }) async {
     await _configureAudioSession();
 
     final http.Client httpClient = client ?? http.Client();
-    String id = await _fetchSessionId(token, httpClient, fullName,
-        geoLocation: geoLocation);
+    String id = await _fetchSessionId(token, httpClient);
     final rand = Random.secure();
 
     final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
     final digits = allDigits.take(7).toList();
     Biometry._phrase = digits.join();
 
-    debugPrint("Phrase: $_phrase");
-    return Biometry._(token, httpClient, id, fullName,
-        geoLocation: geoLocation);
-  }
-
-  /// Sets or updates the geolocation information.
-  void setGeoLocation(BiometryGeoLocation? geoLocation) {
-    _geoLocation = geoLocation;
+    if (kDebugMode) {
+      debugPrint("Phrase: $_phrase");
+    }
+    return Biometry._(token, httpClient, id, userId, fullName);
   }
 
   /// Disposes the Biometry class.
@@ -97,7 +95,9 @@ class Biometry {
     final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
     final digits = allDigits.take(7).toList();
     _phrase = digits.join();
-    debugPrint("Phrase: $_phrase");
+    if (kDebugMode) {
+      debugPrint("Phrase: $_phrase");
+    }
   }
 
   static Future<void> _configureAudioSession() async {
@@ -122,19 +122,11 @@ class Biometry {
   static Future<String> _fetchSessionId(
     String token,
     http.Client client,
-    String fullName, {
-    BiometryGeoLocation? geoLocation,
-  }) async {
-    final uri = Uri.parse('$_apiGateway/sessions/start?warmup=true');
+  ) async {
+    final uri = Uri.parse('$_apiGatewayV2/sessions?warmup=true');
 
     final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $token'
-      ..headers['X-User-Fullname'] = fullName;
-
-    if (geoLocation != null) {
-      final geoJson = jsonEncode(geoLocation.toJson());
-      request.headers['X-Geo-Location'] = geoJson;
-    }
+      ..headers['Authorization'] = 'Bearer $token';
 
     final response = await client.send(request);
     final responseBody = await http.Response.fromStream(response);
@@ -143,32 +135,39 @@ class Biometry {
     }
     if (response.statusCode == 200) {
       final jsonResponse = jsonDecode(responseBody.body);
-      String data = jsonResponse['data'] ?? '';
-      if (kDebugMode) {
-        debugPrint("Data: $data");
+      final dataRaw = jsonResponse['data'];
+      final id = dataRaw is Map<String, dynamic>
+          ? dataRaw['session_id'] as String?
+          : null;
+      if (id == null || id.isEmpty) {
+        throw Exception(
+            'Failed to retrieve session ID: missing session_id in response: ${responseBody.body}');
       }
-      return data;
+      if (kDebugMode) {
+        debugPrint("Session ID: $id");
+      }
+      return id;
     } else {
       throw Exception('Failed to retrieve session ID: ${responseBody.body}');
     }
   }
 
-  void _addGeoLocationHeader(http.BaseRequest request) {
-    if (_geoLocation != null) {
-      final geoJson = jsonEncode(_geoLocation!.toJson());
-      request.headers['X-Geo-Location'] = geoJson;
-    }
-  }
-
   /// Ends the session by sending a POST request to the API.
-  Future<http.Response> endSession() async {
-    final uri = Uri.parse('$_apiGateway/sessions/end/$sessionId');
+  ///
+  /// If [phoneNumber] is provided, the API additionally runs a SIM-swap
+  /// fraud check for that number.
+  Future<http.Response> endSession({String? phoneNumber}) async {
+    final uri = Uri.parse('$_apiGatewayV2/sessions/$sessionId/end');
     debugPrint("End session: $uri");
+
+    final body = jsonEncode({
+      if (phoneNumber != null) 'phone_number': phoneNumber,
+    });
+
     final request = http.Request('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
-      ..headers['X-User-Fullname'] = _fullName;
-
-    _addGeoLocationHeader(request);
+      ..headers['Content-Type'] = 'application/json'
+      ..body = body;
 
     final response = await _client.send(request);
     if (response.statusCode == 200) {
@@ -184,45 +183,23 @@ class Biometry {
     return http.Response.fromStream(response);
   }
 
-  /// Scans a document using the `flutter_doc_scanner` plugin.
+  /// Scans a document using the `flutter_doc_scanner` plugin and returns the
+  /// path to the first scanned image.
   ///
-  /// By default, it fetches a PDF for Android and a PNG for iOS.
-  ///
-  /// Returns:
-  /// - A `String` representing the path to the scanned document.
-  /// - An empty `String` if the scanning fails or no document is found.
-  ///
-  /// Throws:
-  /// - `PlatformException` if the scanning process fails.
+  /// Returns an empty `String` if the user cancels the scan or scanning
+  /// fails.
   Future<String> scanDocument() async {
-    dynamic scannedDocuments;
     try {
-      scannedDocuments =
-          await FlutterDocScanner().getScannedDocumentAsImages(page: 1) ??
-              'Unknown platform documents';
-    } on PlatformException catch (_) {
-      scannedDocuments = 'Failed to get scanned documents.';
-    }
-    // ios: scannedDocuments is a list of file paths
-    if (scannedDocuments is List && scannedDocuments.isNotEmpty) {
-      return scannedDocuments[0];
-    }
-    // android: scannedDocuments is a map with a string value for 'uri'
-    if (scannedDocuments is Map && scannedDocuments.containsKey('Uri')) {
-      final uriString = scannedDocuments['Uri'];
-      if (uriString is String) {
-        final uriMatch = RegExp(r'imageUri=([^}]+)').firstMatch(uriString);
-        if (uriMatch != null) {
-          final fileUri = uriMatch.group(1);
-          return fileUri ?? "";
-        } else {
-          debugPrint("Regex did not match in uriString: $uriString");
-        }
-      } else {
-        debugPrint("uriString is not a String: $uriString");
+      final result =
+          await FlutterDocScanner().getScannedDocumentAsImages(page: 1);
+      if (result == null || result.images.isEmpty) {
+        return "";
       }
+      return result.images.first;
+    } on DocScanException catch (e) {
+      debugPrint("Document scan failed: ${e.code} ${e.message}");
+      return "";
     }
-    return "";
   }
 
   /// Returns the phrase as a string of words.
@@ -267,35 +244,23 @@ class Biometry {
           'No face image available. Please authenticate a document first.');
     }
 
-    final uri = Uri.parse('$_apiGateway/enroll/face');
+    final uri = Uri.parse('$_apiGatewayV2/enrollments/face');
+
+    final requestJson = jsonEncode({'user_id': _userId});
 
     final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
-      ..headers['X-User-Fullname'] = _fullName
-      ..headers['X-Request-User-Provided-ID'] = sessionId
-      ..headers['X-Session-ID'] = sessionId
+      ..fields['request'] = requestJson
       ..files.add(
         await http.MultipartFile.fromPath(
           'face',
           _faceImagePath!,
-          contentType: MediaType(
-              'image', _faceImagePath!.split('.').last), // Dynamic content type
+          contentType: _faceImagePath!.toLowerCase().endsWith('.jpg') ||
+                  _faceImagePath!.toLowerCase().endsWith('.jpeg')
+              ? MediaType('image', 'jpeg')
+              : MediaType('image', 'png'),
         ),
-      )
-      ..fields['is_document'] = 'false';
-
-    // Device info gathering
-    String deviceInfoJson = '';
-    if (Platform.isIOS) {
-      deviceInfoJson = await _getIosDeviceInfoJson();
-    } else if (Platform.isAndroid) {
-      deviceInfoJson = await _getAndroidDeviceInfoJson();
-    } else {
-      final deviceInfo = await _getDeviceInfo();
-      deviceInfoJson = jsonEncode(deviceInfo);
-    }
-    request.headers['X-Device-Info'] = deviceInfoJson;
-    _addGeoLocationHeader(request);
+      );
 
     if (kDebugMode) {
       print('Enrol Face request: $request');
@@ -321,38 +286,28 @@ class Biometry {
   /// Enrolls voice using the biometry service.
   Future<http.Response> enrolVoice({
     required File videoFile,
+    String? vocabulary,
   }) async {
-    final uri = Uri.parse('$_apiGateway/enroll/voice');
+    final uri = Uri.parse('$_apiGatewayV2/enrollments/voice');
 
     final fileExtension = videoFile.path.split('.').last.toLowerCase();
     final contentType =
         MediaType('video', fileExtension); // Dynamic content type
 
+    final requestJson = jsonEncode({
+      'user_id': _userId,
+      'phrase': phraseWords,
+      if (vocabulary != null) 'vocabulary': vocabulary,
+    });
+
     final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
-      ..headers['X-User-Fullname'] = _fullName
-      ..headers['X-Request-User-Provided-ID'] = sessionId
-      ..headers['X-Session-ID'] = sessionId
+      ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'voice',
         videoFile.path,
         contentType: contentType,
-      ))
-      ..fields['unique_id'] = Uuid().v4() // Generate unique ID
-      ..fields['phrase'] = phraseWords;
-
-    // Device info gathering
-    String deviceInfoJson = '';
-    if (Platform.isIOS) {
-      deviceInfoJson = await _getIosDeviceInfoJson();
-    } else if (Platform.isAndroid) {
-      deviceInfoJson = await _getAndroidDeviceInfoJson();
-    } else {
-      final deviceInfo = await _getDeviceInfo();
-      deviceInfoJson = jsonEncode(deviceInfo);
-    }
-    request.headers['X-Device-Info'] = deviceInfoJson;
-    _addGeoLocationHeader(request);
+      ));
 
     if (kDebugMode) {
       print('Enrol Voice request: $request');
@@ -376,15 +331,16 @@ class Biometry {
     return response;
   }
 
-  /// Processes a document using the biometry service.
+  /// Verifies an identity document using the biometry service.
+  ///
   /// Sends a POST request to the biometry service with the scanned document.
-  /// Detailed device information is gathered and sent in the header as a JSON string.
   /// Returns a `Future<http.Response>` object.
   /// Throws an `Exception` if the request fails.
-  /// Developer docs: https://developer.biometrysolutions.com/concepts/doc-auth/
   ///
-  Future<http.Response> docAuth() async {
-    final uri = Uri.parse('$_apiGateway/docauth/check');
+  /// [provider] and [mrzProvider] override the project's default document
+  /// authenticity / MRZ extraction providers when supplied.
+  Future<http.Response> docAuth({String? provider, String? mrzProvider}) async {
+    final uri = Uri.parse('$_apiGatewayV2/documents/check');
     var docFile = await scanDocument();
     debugPrint("docFile: $docFile");
     final filePath = _stripFileUriPrefix(docFile);
@@ -393,99 +349,90 @@ class Biometry {
       throw Exception('Document scan failed: No document file path received');
     }
 
+    final requestJson = jsonEncode({
+      'session_id': sessionId,
+      if (provider != null) 'provider': provider,
+      if (mrzProvider != null) 'mrz_provider': mrzProvider,
+    });
+
     final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
-      ..headers['X-User-Fullname'] = _fullName
+      ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'document',
         filePath,
-        contentType: MediaType('image', 'png'),
-      ))
-      ..headers['X-Session-ID'] = sessionId;
-
-    String deviceInfoJson = '';
-    if (Platform.isIOS) {
-      deviceInfoJson = await _getIosDeviceInfoJson();
-    } else if (Platform.isAndroid) {
-      deviceInfoJson = await _getAndroidDeviceInfoJson();
-    } else {
-      final deviceInfo = await _getDeviceInfo();
-      deviceInfoJson = jsonEncode(deviceInfo);
-    }
-
-    if (kDebugMode) {
-      dev.log('Device info: $deviceInfoJson');
-    }
-
-    request.headers['X-Device-Info'] = deviceInfoJson;
-    _addGeoLocationHeader(request);
+        contentType: filePath.toLowerCase().endsWith('.jpg') ||
+                filePath.toLowerCase().endsWith('.jpeg')
+            ? MediaType('image', 'jpeg')
+            : MediaType('image', 'png'),
+      ));
 
     // Send the request and wait for the response stream to complete.
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
-    // Process the face image from the response.
-    await _processFaceImage(response);
-
-    // Optional: Check the response status code.
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
           'DocAuth failed with status code: ${response.statusCode}');
     }
 
+    // Process the face image from the response.
+    await _processFaceImage(response);
+
     return response;
   }
 
-  /// Processes a face match.
-  /// Sends a POST request to the biometry service to process the face match.
-  /// Detailed device information is gathered and sent in the header as a JSON string.
-  /// Returns a `Future<http.Response>` object.
-  /// Throws an `Exception` if the request fails.
-  /// Developer docs: https://developer.biometrysolutions.com/concepts/face-match/
-  Future<http.Response> faceMatch() async {
+  /// Matches the captured/enrolled face against either a fresh [video] or,
+  /// by default, the video already captured for the current session.
+  ///
+  /// When [useSessionVideo] is `false`, [video] is required.
+  Future<http.Response> faceMatch({
+    File? video,
+    bool useSessionVideo = true,
+  }) async {
     if (_faceImagePath == null) {
       throw Exception('No face image path provided');
     }
+    if (!useSessionVideo && video == null) {
+      throw Exception(
+          'A video file is required when useSessionVideo is false.');
+    }
 
-    final uri = Uri.parse('$_apiGateway/match-faces');
+    final uri = Uri.parse('$_apiGatewayV2/face-match');
+
+    final requestJson = jsonEncode({
+      'user_id': _userId,
+      'session_id': sessionId,
+      'use_session_video': useSessionVideo,
+    });
 
     final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
-      ..headers['X-User-Fullname'] = _fullName
-      ..headers['X-Use-Prefilled-Video'] =
-          'true' // TODO: make dynamic if needed
-      ..headers['X-Session-ID'] = sessionId
+      ..fields['request'] = requestJson
       ..files.add(
         await http.MultipartFile.fromPath(
-          'image',
+          'reference_image',
           _faceImagePath!,
           contentType: _faceImagePath!.toLowerCase().endsWith('.jpg') ||
                   _faceImagePath!.toLowerCase().endsWith('.jpeg')
               ? MediaType('image', 'jpeg')
               : MediaType('image', 'png'),
         ),
-      )
-      ..fields['X-Request-User-Provided-ID'] = sessionId;
+      );
 
-    // Gather device information.
-    String deviceInfoJson = '';
-    if (Platform.isIOS) {
-      deviceInfoJson = await _getIosDeviceInfoJson();
-    } else if (Platform.isAndroid) {
-      deviceInfoJson = await _getAndroidDeviceInfoJson();
-    } else {
-      final deviceInfo = await _getDeviceInfo();
-      deviceInfoJson = jsonEncode(deviceInfo);
+    if (!useSessionVideo && video != null) {
+      request.files.add(await http.MultipartFile.fromPath(
+        'video',
+        video.path,
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
+      ));
     }
 
     if (kDebugMode) {
       print('request: $request');
-      print(
-          "X-Use-Prefilled-Video: ${request.headers['X-Use-Prefilled-Video']}");
-      print("X-Session-ID: ${request.headers['X-Session-ID']}");
+      print("use_session_video: $useSessionVideo");
     }
-    request.headers['X-Device-Info'] = deviceInfoJson;
-    _addGeoLocationHeader(request);
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
@@ -503,186 +450,169 @@ class Biometry {
     return response;
   }
 
-  /// Processes a video file.
+  /// Checks face liveness, active speaker detection, and visual speech
+  /// recognition anti-spoofing on [video].
   ///
-  /// Sends a POST request to the biometry service to process the video.
-  /// Detailed device information is gathered and sent in the header as a JSON string.
-  ///
-  /// If both consent and storage consent have been given, the backend will automatically
-  /// perform enrollment (both face and voice) during video processing. Otherwise, it
-  /// performs authentication only.
-  ///
-  /// When automatic enrollment is triggered, the response will include the 'X-Auto-Enroll'
-  /// header to indicate that enrollment has started (enrollment is asynchronous).
-  Future<http.Response> processVideo({
-    required File videoFile,
+  /// This is one of the endpoints that together replace the v1
+  /// `processVideo` call, which has no direct v2 equivalent. Pass service
+  /// names in [excludeServices] (from `face_liveness_detection`,
+  /// `active_speaker_detection`, `visual_speech_recognition`,
+  /// `face_recognition`, `voice_recognition`) to skip them.
+  Future<http.Response> livenessCheck({
+    required File video,
+    List<String>? excludeServices,
+    String? trigger,
+    String? vocabulary,
   }) async {
-    final uri = Uri.parse('$_apiGateway/process-video');
+    final uri = Uri.parse('$_apiGatewayV2/liveness');
+
+    final requestJson = jsonEncode({
+      'user_id': _userId,
+      'phrase': phraseWords,
+      'session_id': sessionId,
+      if (excludeServices != null) 'services': {'exclude': excludeServices},
+      if (trigger != null) 'trigger': trigger,
+      if (vocabulary != null) 'vocabulary': vocabulary,
+    });
 
     final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
-      ..headers['X-User-Fullname'] = _fullName
+      ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'video',
-        videoFile.path,
-        contentType: MediaType('video', 'mp4'),
-      ))
-      ..fields['phrase'] = phraseWords
-      ..headers['X-Request-User-Provided-ID'] =
-          sessionId //Todo: update when API is updated
-      ..headers['X-Session-ID'] = sessionId;
-    String deviceInfoJson = '';
-    if (Platform.isIOS) {
-      deviceInfoJson = await _getIosDeviceInfoJson();
-    } else if (Platform.isAndroid) {
-      deviceInfoJson = await _getAndroidDeviceInfoJson();
-    } else {
-      final deviceInfo = await _getDeviceInfo();
-      deviceInfoJson = jsonEncode(deviceInfo);
-    }
+        video.path,
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
+      ));
 
-    if (kDebugMode) {
-      print('Device info: $deviceInfoJson');
-    }
-
-    request.headers['X-Device-Info'] = deviceInfoJson;
-    _addGeoLocationHeader(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
-    if (kDebugMode) {
-      final redactedHeaders = Map.of(response.headers)
-        ..update('authorization', (_) => 'REDACTED',
-            ifAbsent: () => 'REDACTED');
-      debugPrint('Process Video Response Status: ${response.statusCode}');
-      debugPrint('Process Video Response Headers: $redactedHeaders');
-      debugPrint('Process Video Response Body: ${response.body}');
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Liveness check failed: ${response.statusCode}');
     }
-
     return response;
   }
 
-  /// Allows consent by sending a consent flag to the API.
+  /// Verifies the face in [video] against the user's enrolled face template.
+  Future<http.Response> faceVerify({
+    required File video,
+    String? vocabulary,
+  }) async {
+    final uri = Uri.parse('$_apiGatewayV2/face-verify');
+
+    final requestJson = jsonEncode({
+      'user_id': _userId,
+      'phrase': phraseWords,
+      'session_id': sessionId,
+      if (vocabulary != null) 'vocabulary': vocabulary,
+    });
+
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_token'
+      ..fields['request'] = requestJson
+      ..files.add(await http.MultipartFile.fromPath(
+        'video',
+        video.path,
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
+      ));
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Face verify failed: ${response.statusCode}');
+    }
+    return response;
+  }
+
+  /// Verifies the speaker in [video] against the user's enrolled voice
+  /// template.
+  Future<http.Response> voiceVerify({
+    required File video,
+    String? vocabulary,
+  }) async {
+    final uri = Uri.parse('$_apiGatewayV2/voice-verify');
+
+    final requestJson = jsonEncode({
+      'user_id': _userId,
+      'phrase': phraseWords,
+      'session_id': sessionId,
+      if (vocabulary != null) 'vocabulary': vocabulary,
+    });
+
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_token'
+      ..fields['request'] = requestJson
+      ..files.add(await http.MultipartFile.fromPath(
+        'voice',
+        video.path,
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
+      ));
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Voice verify failed: ${response.statusCode}');
+    }
+    return response;
+  }
+
+  /// Submits [video] for asynchronous deepfake analysis.
   ///
-  /// Developer docs: https://developer.biometrysolutions.com/concepts/consent/
-  Future<http.Response> allowConsent({required bool consent}) async {
-    final uri = Uri.parse('$_consentUrl/consent');
+  /// The response body contains a check `status`
+  /// (`pending`/`processing`/`completed`/`failed`) rather than an immediate
+  /// verdict — poll `GET /v2/deepfake/checks/{id}` (not yet wrapped by this
+  /// SDK) using the returned check `id` if you need the final result.
+  Future<http.Response> deepfakeCheck({required File video}) async {
+    final uri = Uri.parse('$_apiGatewayV2/deepfake/checks');
 
-    // Create a JSON body with the consent flag.
-    final body = jsonEncode({
-      'is_consent_given': consent,
-      'user_fullname': _fullName,
+    final requestJson = jsonEncode({
+      'user_id': _userId,
+      'session_id': sessionId,
     });
 
-    final request = http.Request('POST', uri)
+    final request = http.MultipartRequest('POST', uri)
       ..headers['Authorization'] = 'Bearer $_token'
-      ..headers['Content-Type'] = 'application/json'
-      ..headers['X-User-Fullname'] = _fullName
-      ..headers['X-Request-User-Provided-ID'] = sessionId
-      ..body = body;
+      ..fields['request'] = requestJson
+      ..files.add(await http.MultipartFile.fromPath(
+        'video',
+        video.path,
+        contentType:
+            MediaType('video', video.path.split('.').last.toLowerCase()),
+      ));
 
-    String deviceInfoJson = '';
-    if (Platform.isIOS) {
-      deviceInfoJson = await _getIosDeviceInfoJson();
-    } else if (Platform.isAndroid) {
-      deviceInfoJson = await _getAndroidDeviceInfoJson();
-    } else {
-      final deviceInfo = await _getDeviceInfo();
-      deviceInfoJson = jsonEncode(deviceInfo);
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception('Deepfake check failed: ${response.statusCode}');
     }
-    request.headers['X-Device-Info'] = deviceInfoJson;
-    _addGeoLocationHeader(request);
+    return response;
+  }
+
+  /// Records that the user has approved the consent template [consentId].
+  ///
+  /// Note: the v2 API has no revoke/unapprove endpoint — unlike v1's
+  /// `allowConsent(consent: false)`, there is currently no way to withdraw
+  /// a recorded approval through this API.
+  Future<http.Response> approveConsent({required String consentId}) async {
+    final uri = Uri.parse(
+        '$_apiGatewayV2/consents/${Uri.encodeComponent(consentId)}/approve/${Uri.encodeComponent(_userId)}');
+
+    final request = http.Request('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_token';
+
     debugPrint("request: $request");
     final response = await _client.send(request);
     final httpResponse = await http.Response.fromStream(response);
     if (httpResponse.statusCode >= 200 && httpResponse.statusCode < 300) {
-      _cachedConsent = null;
+      _cachedApprovals = null;
     }
     return httpResponse;
-  }
-
-  /// Allows Storage consent by sending a consent flag to the API.
-  /// This allows Biometry to keep the video and voice data for future use.
-  /// Developer docs: https://developer.biometrysolutions.com/concepts/consent/
-  Future<http.Response> allowStorageConsent({required bool consent}) async {
-    final uri = Uri.parse('$_consentUrl/strg-consent');
-
-    // Create a JSON body with the consent flag.
-    final body = jsonEncode({
-      'is_consent_given': consent,
-      'user_fullname': _fullName,
-    });
-
-    final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
-      ..headers['Content-Type'] = 'application/json'
-      ..headers['X-User-Fullname'] = _fullName
-      ..headers['X-Request-User-Provided-ID'] = sessionId
-      ..body = body;
-
-    String deviceInfoJson = '';
-    if (Platform.isIOS) {
-      deviceInfoJson = await _getIosDeviceInfoJson();
-    } else if (Platform.isAndroid) {
-      deviceInfoJson = await _getAndroidDeviceInfoJson();
-    } else {
-      final deviceInfo = await _getDeviceInfo();
-      deviceInfoJson = jsonEncode(deviceInfo);
-    }
-    request.headers['X-Device-Info'] = deviceInfoJson;
-    _addGeoLocationHeader(request);
-    debugPrint("request: $request");
-    final response = await _client.send(request);
-    final httpResponse = await http.Response.fromStream(response);
-    if (httpResponse.statusCode >= 200 && httpResponse.statusCode < 300) {
-      _cachedConsent = null;
-    }
-    return httpResponse;
-  }
-
-  /// Collects detailed iOS device information and returns it as a JSON string.
-  Future<String> _getIosDeviceInfoJson() async {
-    final deviceInfoPlugin = DeviceInfoPlugin();
-    final iosInfo = await deviceInfoPlugin.iosInfo;
-    final snakeCaseMap = convertKeysToSnakeCase(iosInfo.data);
-    return jsonEncode(snakeCaseMap);
-  }
-
-  /// Collects detailed Android device information and returns it as a JSON string.
-  Future<String> _getAndroidDeviceInfoJson() async {
-    final deviceInfoPlugin = DeviceInfoPlugin();
-    final androidInfo = await deviceInfoPlugin.androidInfo;
-    final snakeCaseMap = convertKeysToSnakeCase(androidInfo.data);
-    return jsonEncode(snakeCaseMap);
-  }
-
-  /// Converts the keys of a map (and any nested maps or lists) to snake_case.
-  Map<String, dynamic> convertKeysToSnakeCase(Map<String, dynamic> original) {
-    return original.map((key, value) {
-      final snakeCaseKey = key.snakeCase;
-      if (value is Map<String, dynamic>) {
-        return MapEntry(snakeCaseKey, convertKeysToSnakeCase(value));
-      } else if (value is List) {
-        return MapEntry(
-          snakeCaseKey,
-          value.map((item) {
-            if (item is Map<String, dynamic>) {
-              return convertKeysToSnakeCase(item);
-            }
-            return item;
-          }).toList(),
-        );
-      }
-      return MapEntry(snakeCaseKey, value);
-    });
-  }
-
-  /// Collects basic device info for non-mobile platforms.
-  Future<Map<String, dynamic>> _getDeviceInfo() async {
-    return {
-      'device_os': Platform.operatingSystem,
-      'device_os_version': Platform.operatingSystemVersion,
-    };
   }
 
   Future<void> _processFaceImage(http.Response response) async {
@@ -701,22 +631,23 @@ class Biometry {
         return;
       }
       final data = dataRaw;
-      if (!data.containsKey('face_image_base64') ||
-          data['face_image_base64'] is! String) {
-        dev.log('Error: Missing or invalid "face_image_base64" key');
+      if (!data.containsKey('portrait_photo') ||
+          data['portrait_photo'] is! String) {
+        dev.log('Error: Missing or invalid "portrait_photo" key');
         return;
       }
 
-      final faceImageBase64 = data['face_image_base64'] as String;
+      final portraitPhotoBase64 = data['portrait_photo'] as String;
 
-      if (!_isValidBase64(faceImageBase64)) {
+      if (!_isValidBase64(portraitPhotoBase64)) {
         dev.log('Error: Invalid base64 string format');
         return;
       }
 
-      dev.log('Face image base64: $faceImageBase64');
+      dev.log(
+          'Portrait photo received (${portraitPhotoBase64.length} base64 chars)');
 
-      final imageBytes = base64Decode(faceImageBase64);
+      final imageBytes = base64Decode(portraitPhotoBase64);
 
       final directory = await getApplicationDocumentsDirectory();
       final filePath =
@@ -764,177 +695,73 @@ class Biometry {
     return uri;
   }
 
-  /// Ensures the user has given authorization consent, fetching and caching
-  /// the result on first call. Subsequent calls within the same session reuse
-  /// the cached value without an extra network request.
-  Future<void> assertConsent() async {
-    _cachedConsent ??= await getConsentHistory();
+  /// Ensures the user has approved the consent template [consentId],
+  /// fetching and caching the user's approvals on first call. Subsequent
+  /// calls within the same session reuse the cached value without an extra
+  /// network request.
+  Future<void> assertConsent({required String consentId}) async {
+    final approvals = _cachedApprovals ?? await getConsentApprovals();
+    _cachedApprovals = approvals;
 
-    if (_cachedConsent!.consent == null ||
-        !_cachedConsent!.consent!.isConsentGiven) {
-      throw Exception('User "$_fullName" has not given authorization consent.');
+    final hasApproval = approvals.any((a) => a.consentId == consentId);
+    if (!hasApproval) {
+      throw Exception('User "$_userId" has not approved consent "$consentId".');
     }
   }
 
-  /// Retrieves the full consent history for the current user.
-  ///
-  /// Returns a [ConsentHistoryResult] containing both authorization consent
-  /// and storage consent records, including their full histories.
-  Future<ConsentHistoryResult> getConsentHistory() async {
-    final uri = Uri.parse('$_consentUrl/history').replace(
-      queryParameters: {'user_fullname': _fullName},
-    );
+  /// Retrieves all consent approvals recorded for the current user.
+  Future<List<ConsentApproval>> getConsentApprovals() async {
+    final uri = Uri.parse(
+        '$_apiGatewayV2/consents/my-approvals/${Uri.encodeComponent(_userId)}');
 
     final response = await _client.get(
       uri,
       headers: {'Authorization': 'Bearer $_token'},
     );
 
-    // 404 means no consents exist at all — return a result with both fields
-    // null so the caller can inspect and react rather than catching an exception.
-    if (response.statusCode == 404) {
-      return ConsentHistoryResult(userFullname: _fullName);
-    }
-
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Failed to fetch consent history: ${response.body}');
+      throw Exception('Failed to fetch consent approvals: ${response.body}');
     }
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     final dataRaw = json['data'];
-    if (dataRaw is! Map<String, dynamic>) {
+    if (dataRaw is! List) {
       throw Exception(
-        'Unexpected consent history response format: ${response.body}',
+        'Unexpected consent approvals response format: ${response.body}',
       );
     }
-    return ConsentHistoryResult.fromJson(dataRaw);
+    final approvals = dataRaw
+        .map((e) => ConsentApproval.fromJson(e as Map<String, dynamic>))
+        .toList();
+    _cachedApprovals = approvals;
+    return approvals;
   }
 }
 
-/// Represents geolocation information for biometry transactions.
-class BiometryGeoLocation {
-  /// Latitude coordinate.
-  final double lat;
+/// A single consent approval record, as returned by
+/// [Biometry.getConsentApprovals].
+class ConsentApproval {
+  /// The ID of the consent template that was approved.
+  final String consentId;
 
-  /// Longitude coordinate.
-  final double lng;
+  /// The user who approved it.
+  final String userId;
 
-  /// Country name or code.
-  final String country;
+  /// When the approval was recorded.
+  final DateTime approvedAt;
 
-  /// City name.
-  final String city;
-
-  /// Optional client IP address.
-  final String? ip;
-
-  /// Creates a new [BiometryGeoLocation] instance.
-  BiometryGeoLocation({
-    required this.lat,
-    required this.lng,
-    required this.country,
-    required this.city,
-    this.ip,
+  /// Creates an approval record with the given fields.
+  const ConsentApproval({
+    required this.consentId,
+    required this.userId,
+    required this.approvedAt,
   });
 
-  /// Converts the geolocation information to a JSON map.
-  Map<String, dynamic> toJson() {
-    return {
-      'lat': lat,
-      'lng': lng,
-      'country': country,
-      'city': city,
-      if (ip != null) 'ip': ip,
-    };
-  }
-}
-
-/// A single entry in a consent history list.
-class ConsentHistoryEntry {
-  /// Whether consent was granted or revoked in this entry.
-  final bool isConsentGiven;
-
-  /// When this consent change occurred.
-  final DateTime date;
-
-  /// Creates an entry with the given [isConsentGiven] and [date].
-  const ConsentHistoryEntry({required this.isConsentGiven, required this.date});
-
-  /// Parses [ConsentHistoryEntry] from the API JSON shape.
-  factory ConsentHistoryEntry.fromJson(Map<String, dynamic> json) =>
-      ConsentHistoryEntry(
-        isConsentGiven: json['is_consent_given'] as bool,
-        date: DateTime.parse(json['date'] as String),
-      );
-}
-
-/// A single consent record with its full history.
-class ConsentRecord {
-  /// Current consent state (true = granted, false = revoked).
-  final bool isConsentGiven;
-
-  /// Chronological list of consent changes.
-  final List<ConsentHistoryEntry> history;
-
-  /// When this consent record was first created.
-  final DateTime createdAt;
-
-  /// When this consent record was last updated.
-  final DateTime updatedAt;
-
-  /// Creates a record with the given fields.
-  const ConsentRecord({
-    required this.isConsentGiven,
-    required this.history,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-
-  /// Parses [ConsentRecord] from the API JSON shape.
-  factory ConsentRecord.fromJson(Map<String, dynamic> json) => ConsentRecord(
-        isConsentGiven: json['is_consent_given'] as bool,
-        history: (json['history'] as List<dynamic>)
-            .map((e) => ConsentHistoryEntry.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        createdAt: DateTime.parse(json['created_at'] as String),
-        updatedAt: DateTime.parse(json['updated_at'] as String),
-      );
-}
-
-/// The full consent history for a user, returned by [Biometry.getConsentHistory].
-///
-/// Per the API contract, [consent] is null when the user has only given storage
-/// consent, and [storageConsent] is null when the user has only given
-/// authorization consent. Both are non-null when the user has given both.
-class ConsentHistoryResult {
-  /// User identifier (full name) for this consent history.
-  final String userFullname;
-
-  /// Authorization consent record. Null if the user has never given
-  /// authorization consent (only storage consent exists).
-  final ConsentRecord? consent;
-
-  /// Storage consent record. Null if the user has never given storage consent
-  /// (only authorization consent exists).
-  final ConsentRecord? storageConsent;
-
-  /// Creates a result with the given [userFullname] and optional consent records.
-  const ConsentHistoryResult({
-    required this.userFullname,
-    this.consent,
-    this.storageConsent,
-  });
-
-  /// Parses [ConsentHistoryResult] from the API JSON shape.
-  factory ConsentHistoryResult.fromJson(Map<String, dynamic> json) =>
-      ConsentHistoryResult(
-        userFullname: json['user_fullname'] as String,
-        consent: json['consent'] != null
-            ? ConsentRecord.fromJson(json['consent'] as Map<String, dynamic>)
-            : null,
-        storageConsent: json['storage_consent'] != null
-            ? ConsentRecord.fromJson(
-                json['storage_consent'] as Map<String, dynamic>)
-            : null,
+  /// Parses [ConsentApproval] from the API JSON shape.
+  factory ConsentApproval.fromJson(Map<String, dynamic> json) =>
+      ConsentApproval(
+        consentId: json['consent_id'] as String,
+        userId: json['user_id'] as String,
+        approvedAt: DateTime.parse(json['approved_at'] as String),
       );
 }

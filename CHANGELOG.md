@@ -1,3 +1,29 @@
+## [2.0.0] - 2026-07-21
+
+### Added
+- `userId` parameter (required) on `Biometry.initialize()` — the opaque, customer-provided identity key the v2 API uses to identify users.
+- `livenessCheck()`, `faceVerify()`, `voiceVerify()`, and `deepfakeCheck()` methods, replacing `processVideo()`.
+- `faceMatch()` accepts `useSessionVideo` (defaults to `true`, matching the old hardcoded behavior) and an optional `video` file for when it's `false`.
+- `docAuth()` accepts optional `provider` and `mrzProvider` overrides.
+- `endSession()` accepts an optional `phoneNumber` to run a SIM-swap fraud check when ending the session.
+- `approveConsent({consentId})` and `getConsentApprovals()`, with a new `ConsentApproval` model (`consentId`, `userId`, `approvedAt`).
+
+### Changed
+- **Migrated to the Biometry v2 REST API** (`/api-gateway/v2/*`) across every endpoint: sessions, document verification, face/voice enrollment, and face matching.
+- `assertConsent()` now takes a required `consentId` and checks it against `getConsentApprovals()`, instead of checking a cached boolean flag.
+
+### Removed (Breaking)
+- `fullName` is no longer sent to the API — it's local/display-only now; pass `userId` instead for API calls.
+- `processVideo()` removed — v2 has no single call that both authenticates and auto-enrolls; use `livenessCheck()`, `faceVerify()`, `voiceVerify()`, and/or `deepfakeCheck()` individually.
+- `allowConsent()`, `allowStorageConsent()`, `getConsentHistory()`, and the `ConsentHistoryResult`/`ConsentRecord`/`ConsentHistoryEntry` models removed — replaced by `approveConsent()`/`getConsentApprovals()`/`ConsentApproval`. **v2 has no consent-revoke endpoint** — there is currently no way to withdraw a recorded approval.
+- `BiometryGeoLocation`, `setGeoLocation()`, and the `geoLocation` parameter on `initialize()` removed — v2 has no geolocation field.
+- Device-info collection removed (the `X-Device-Info` header and the `device_info_plus`/`recase` dependencies) — v2 has no device-info field.
+
+### Fixed
+- `scanDocument()` now correctly handles the `flutter_doc_scanner` ^0.0.21 API (`ImageScanResult` / `DocScanException`) instead of the old raw `List`/`Map`/`PlatformException` shape — the previous implementation silently returned an empty path on every scan against the actually-resolved plugin version.
+
+**This is a breaking release.** Every consumer needs to: pass `userId` to `initialize()`, replace `processVideo()` calls with the new granular verification methods, and migrate consent handling to the approval-based API. See the [README](README.md) for updated usage examples.
+
 ## [1.0.8] - 2026-03-03
 
 ### Added

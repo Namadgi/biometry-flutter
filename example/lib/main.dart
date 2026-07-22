@@ -1,12 +1,9 @@
-import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:io';
 
 import 'package:biometry/biometry.dart';
 import 'package:biometry/biometry_scanner_widget.dart';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 
 // theme constants
 class AppTheme {
@@ -22,7 +19,7 @@ class AppTheme {
     borderRadius: BorderRadius.circular(12),
     boxShadow: [
       BoxShadow(
-        color: Colors.black.withOpacity(0.2),
+        color: Colors.black.withValues(alpha: 0.2),
         blurRadius: 4,
         offset: Offset(0, 2),
       ),
@@ -35,7 +32,7 @@ void main() {
 }
 
 class BiometryApp extends StatelessWidget {
-  const BiometryApp({Key? key}) : super(key: key);
+  const BiometryApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +43,7 @@ class BiometryApp extends StatelessWidget {
 }
 
 class BiometryHomePage extends StatefulWidget {
-  const BiometryHomePage({Key? key}) : super(key: key);
+  const BiometryHomePage({super.key});
 
   @override
   BiometryHomePageState createState() => BiometryHomePageState();
@@ -57,6 +54,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _fullNameController = TextEditingController();
+  final TextEditingController _userIdController = TextEditingController();
+  final TextEditingController _consentIdController = TextEditingController();
 
   File? _capturedVideo;
   String _result = '';
@@ -79,127 +78,10 @@ class BiometryHomePageState extends State<BiometryHomePage>
   void dispose() {
     _tokenController.dispose();
     _fullNameController.dispose();
+    _userIdController.dispose();
+    _consentIdController.dispose();
     _animationController.dispose();
     super.dispose();
-  }
-
-  /// Performs reverse geocoding to get city and country from coordinates.
-  /// Returns a map with 'city' and 'country' keys, or empty map on failure.
-  Future<Map<String, String>> _reverseGeocode(
-    double latitude,
-    double longitude,
-  ) async {
-    try {
-      final response = await http.get(
-        Uri.parse(
-          'https://nominatim.openstreetmap.org/reverse?format=json&lat=$latitude&lon=$longitude&zoom=10&addressdetails=1',
-        ),
-        headers: {'User-Agent': 'BiometryFlutterExample/1.0'},
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode != 200) {
-        return {};
-      }
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final address = data['address'] as Map<String, dynamic>?;
-
-      if (address == null) {
-        return {};
-      }
-
-      final country = address['country_code']?.toString().toUpperCase() ??
-          address['ISO3166-1:alpha2']?.toString().toUpperCase() ??
-          address['country']?.toString();
-
-      final city = _extractCity(address);
-
-      return {
-        if (country != null) 'country': country,
-        if (city != null) 'city': city,
-      };
-    } catch (e) {
-      return {};
-    }
-  }
-
-  /// Extracts city name from address data, trying multiple field names.
-  String? _extractCity(Map<String, dynamic> address) {
-    const cityFields = [
-      'city',
-      'town',
-      'village',
-      'municipality',
-      'suburb',
-      'neighbourhood',
-      'county',
-      'state_district',
-      'state',
-    ];
-
-    for (final field in cityFields) {
-      final value = address[field]?.toString();
-      if (value != null && value.isNotEmpty) {
-        return value;
-      }
-    }
-    return null;
-  }
-
-  /// Checks and requests location permission if needed.
-  /// Returns true if permission is granted (whileInUse or always), false otherwise.
-  Future<bool> _checkAndRequestPermission() async {
-    LocationPermission permission = await Geolocator.checkPermission();
-
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        return false;
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      return false;
-    }
-
-    return permission == LocationPermission.whileInUse ||
-        permission == LocationPermission.always;
-  }
-
-  /// Gets the current device location and returns a BiometryGeoLocation object.
-  /// Returns null if location permission is denied or location cannot be determined.
-  Future<BiometryGeoLocation?> _getCurrentLocation() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        return null;
-      }
-
-      if (!await _checkAndRequestPermission()) {
-        return null;
-      }
-
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-        timeLimit: const Duration(seconds: 15),
-      );
-
-      final locationInfo = await _reverseGeocode(
-        position.latitude,
-        position.longitude,
-      );
-      final country = locationInfo['country'] ?? 'Unknown';
-      final city = locationInfo['city'] ?? 'Unknown';
-
-      return BiometryGeoLocation(
-        lat: position.latitude,
-        lng: position.longitude,
-        country: country,
-        city: city,
-      );
-    } catch (e) {
-      return null;
-    }
   }
 
   Future<void> _initializeBiometry() async {
@@ -213,23 +95,22 @@ class BiometryHomePageState extends State<BiometryHomePage>
       _showSnackBar('Please enter your full name.');
       return;
     }
+    final userId = _userIdController.text.trim();
+    if (userId.isEmpty) {
+      _showSnackBar('Please enter a user ID.');
+      return;
+    }
     try {
-      // Get current device location
-      final geoLocation = await _getCurrentLocation();
-
       _biometry = await Biometry.initialize(
         token: token,
+        userId: userId,
         fullName: fullName,
-        geoLocation: geoLocation,
       );
       setState(() {
         _isBiometryInitialized = true;
       });
 
-      final message = geoLocation != null
-          ? 'Biometry initialized with location: ${geoLocation.city}, ${geoLocation.country}'
-          : 'Biometry initialized successfully';
-      _showSnackBar(message);
+      _showSnackBar('Biometry initialized successfully');
     } catch (e) {
       _showSnackBar('Failed to initialize Biometry: $e');
     }
@@ -292,23 +173,20 @@ class BiometryHomePageState extends State<BiometryHomePage>
     }
   }
 
-  Future<void> _allowConsent() async {
+  Future<void> _approveConsent() async {
+    final consentId = _consentIdController.text.trim();
+    if (consentId.isEmpty) {
+      _showSnackBar('Please enter a consent template ID.');
+      return;
+    }
     await _executeBiometricOperation(
-      operationCallback: () => _biometry!.allowConsent(consent: true),
-      successMessage: 'Consent allowed successfully!',
-      errorMessage: 'Failed to allow consent',
+      operationCallback: () => _biometry!.approveConsent(consentId: consentId),
+      successMessage: 'Consent approved successfully!',
+      errorMessage: 'Failed to approve consent',
     );
   }
 
-  Future<void> _allowStorageConsent() async {
-    await _executeBiometricOperation(
-      operationCallback: () => _biometry!.allowStorageConsent(consent: true),
-      successMessage: 'Storage Consent allowed successfully!',
-      errorMessage: 'Failed to allow storage consent',
-    );
-  }
-
-  Future<void> _getConsentHistory() async {
+  Future<void> _getConsentApprovals() async {
     if (_biometry == null || !_isBiometryInitialized) {
       _showSnackBar('Biometry is not initialized.');
       return;
@@ -319,14 +197,14 @@ class BiometryHomePageState extends State<BiometryHomePage>
       _animationController.forward();
     });
     try {
-      final history = await _biometry!.getConsentHistory();
+      final approvals = await _biometry!.getConsentApprovals();
       setState(() {
-        _result = _formatConsentHistory(history);
+        _result = _formatConsentApprovals(approvals);
         _showResultsPanel = true;
       });
     } catch (e) {
       setState(() {
-        _result = 'Failed to fetch consent history: $e';
+        _result = 'Failed to fetch consent approvals: $e';
         _showResultsPanel = true;
       });
     } finally {
@@ -337,25 +215,15 @@ class BiometryHomePageState extends State<BiometryHomePage>
     }
   }
 
-  String _formatConsentHistory(ConsentHistoryResult h) {
-    String formatRecord(String label, ConsentRecord r) {
-      final entries = r.history
-          .map((e) =>
-              '  • ${e.isConsentGiven ? "Granted" : "Revoked"} on ${e.date.toLocal()}')
-          .join('\n');
-      return '$label\n'
-          '  Current: ${r.isConsentGiven ? "Granted" : "Revoked"}\n'
-          '  History:\n$entries';
+  String _formatConsentApprovals(List<ConsentApproval> approvals) {
+    if (approvals.isEmpty) {
+      return 'No consent approvals recorded yet.';
     }
-
-    final authConsent = h.consent != null
-        ? formatRecord("Authorization Consent:", h.consent!)
-        : 'Authorization Consent:\n  Not set';
-    final storageConsent = h.storageConsent != null
-        ? formatRecord("Storage Consent:", h.storageConsent!)
-        : 'Storage Consent:\n  Not set';
-
-    return 'Consent History for ${h.userFullname}\n\n$authConsent\n\n$storageConsent';
+    final entries = approvals
+        .map(
+            (a) => '  • ${a.consentId} — approved on ${a.approvedAt.toLocal()}')
+        .join('\n');
+    return 'Consent Approvals for ${_biometry!.fullName}\n\n$entries';
   }
 
   Future<void> _endSession() async {
@@ -373,11 +241,38 @@ class BiometryHomePageState extends State<BiometryHomePage>
     }
   }
 
-  Future<void> _processVideo() async {
+  Future<void> _livenessCheck() async {
     await _executeBiometricOperation(
-      operationCallback: () => _biometry!.processVideo(videoFile: _capturedVideo!),
-      successMessage: 'Video processed successfully!',
-      errorMessage: 'Failed to process video',
+      operationCallback: () => _biometry!.livenessCheck(video: _capturedVideo!),
+      successMessage: 'Liveness check completed!',
+      errorMessage: 'Failed to check liveness',
+      requireVideo: true,
+    );
+  }
+
+  Future<void> _faceVerify() async {
+    await _executeBiometricOperation(
+      operationCallback: () => _biometry!.faceVerify(video: _capturedVideo!),
+      successMessage: 'Face verified successfully!',
+      errorMessage: 'Failed to verify face',
+      requireVideo: true,
+    );
+  }
+
+  Future<void> _voiceVerify() async {
+    await _executeBiometricOperation(
+      operationCallback: () => _biometry!.voiceVerify(video: _capturedVideo!),
+      successMessage: 'Voice verified successfully!',
+      errorMessage: 'Failed to verify voice',
+      requireVideo: true,
+    );
+  }
+
+  Future<void> _deepfakeCheck() async {
+    await _executeBiometricOperation(
+      operationCallback: () => _biometry!.deepfakeCheck(video: _capturedVideo!),
+      successMessage: 'Deepfake check submitted!',
+      errorMessage: 'Failed to submit deepfake check',
       requireVideo: true,
     );
   }
@@ -664,6 +559,33 @@ class BiometryHomePageState extends State<BiometryHomePage>
                               }
                               return null;
                             },
+                            textInputAction: TextInputAction.next,
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _userIdController,
+                            decoration: InputDecoration(
+                              labelText: 'User ID',
+                              labelStyle:
+                                  TextStyle(color: AppTheme.textColorSecondary),
+                              prefixIcon: Icon(Icons.badge,
+                                  color: AppTheme.accentColor),
+                              filled: true,
+                              fillColor: const Color(0xFF1F2937),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 12),
+                            ),
+                            style: const TextStyle(color: Colors.white),
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'Please enter a user ID';
+                              }
+                              return null;
+                            },
                             textInputAction: TextInputAction.done,
                           ),
                           const SizedBox(height: 16),
@@ -695,30 +617,46 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'Consents are required for enrollment.',
+                              'Consents are required for enrollment. Enter the ID of a '
+                              'consent template configured in the Biometry dashboard.',
                               style: TextStyle(
                                 color: Color(0xFF9CA3AF),
                                 fontSize: 14,
                               ),
                             ),
                             const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _consentIdController,
+                              decoration: InputDecoration(
+                                labelText: 'Consent Template ID',
+                                labelStyle: TextStyle(
+                                    color: AppTheme.textColorSecondary),
+                                prefixIcon: Icon(Icons.fact_check,
+                                    color: AppTheme.accentColor),
+                                filled: true,
+                                fillColor: const Color(0xFF1F2937),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 12),
+                              ),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            const SizedBox(height: 12),
                             _buildActionButton(
-                              label: 'Consent to Use Biometrics',
+                              label: 'Approve Consent',
                               icon: Icons.check_circle,
-                              onPressed: _allowConsent,
-                              tooltip: 'Allow use of biometric data',
+                              onPressed: _approveConsent,
+                              tooltip:
+                                  'Record approval of the consent template above',
                             ),
                             _buildActionButton(
-                              label: 'Consent to Store Biometrics',
-                              icon: Icons.storage,
-                              onPressed: _allowStorageConsent,
-                              tooltip: 'Allow storage of biometric data',
-                            ),
-                            _buildActionButton(
-                              label: 'View Consent History',
+                              label: 'View Consent Approvals',
                               icon: Icons.history,
-                              onPressed: _getConsentHistory,
-                              tooltip: 'Retrieve full consent history',
+                              onPressed: _getConsentApprovals,
+                              tooltip: 'Retrieve recorded consent approvals',
                             ),
                           ],
                         ),
@@ -771,12 +709,38 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             ],
                             const SizedBox(height: 16),
                             _buildActionButton(
-                              label: 'Process Video',
-                              onPressed:
-                                  _capturedVideo != null ? _processVideo : null,
+                              label: 'Liveness Check',
+                              onPressed: _capturedVideo != null
+                                  ? _livenessCheck
+                                  : null,
                               icon: Icons.videocam,
                               tooltip:
-                                  'Process the captured video (auto-enrolls if consents given)',
+                                  'Check face liveness and anti-spoofing on the captured video',
+                            ),
+                            _buildActionButton(
+                              label: 'Verify Face (video)',
+                              onPressed:
+                                  _capturedVideo != null ? _faceVerify : null,
+                              icon: Icons.face_retouching_natural,
+                              tooltip:
+                                  'Verify the face in the captured video against the enrolled template',
+                            ),
+                            _buildActionButton(
+                              label: 'Verify Voice',
+                              onPressed:
+                                  _capturedVideo != null ? _voiceVerify : null,
+                              icon: Icons.record_voice_over,
+                              tooltip:
+                                  'Verify the speaker in the captured video against the enrolled template',
+                            ),
+                            _buildActionButton(
+                              label: 'Deepfake Check',
+                              onPressed: _capturedVideo != null
+                                  ? _deepfakeCheck
+                                  : null,
+                              icon: Icons.security,
+                              tooltip:
+                                  'Submit the captured video for asynchronous deepfake analysis',
                             ),
                             _buildActionButton(
                               label: 'Document Auth',
@@ -856,7 +820,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
+                      color: Colors.black.withValues(alpha: 0.2),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
