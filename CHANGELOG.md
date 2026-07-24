@@ -25,6 +25,8 @@
 
 **This is a breaking release.** Every consumer needs to: pass `userId` to `initialize()`, replace `processVideo()` calls with the new granular verification methods, and migrate consent handling to the approval-based API. See the [README](README.md) for updated usage examples.
 
+Published to [pub.dev](https://pub.dev/packages/biometry/versions/2.0.0) on 2026-07-23.
+
 ## [1.0.10] - 2026-03-11
 
 _Retroactively added — published to pub.dev but missing from this changelog's history until now._
