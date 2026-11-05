@@ -11,7 +11,7 @@ import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 
 /// A class to handle biometry-related operations against the Biometry v2 API.
-///   - [initialize] - Initializes the Biometry class with a token, user ID, full name and an optional HTTP client.
+///   - [initialize] - Initializes the Biometry class with a user ID and either a token or a backend proxy base URL.
 ///   - [scanDocument] - Scans a document using the flutter_doc_scanner plugin.
 ///   - [docAuth] - Verifies a document using the biometry service.
 ///   - [enrolFace] - Enrolls a face using the biometry service.
@@ -30,15 +30,23 @@ import 'package:path_provider/path_provider.dart';
 /// [setChallenge]. If you don't call it, [initialize] generates the digits on
 /// the device; that fallback is deprecated because it does not stop replays.
 class Biometry {
-  static const String _host = 'https://api.biometrysolutions.com';
-  static const String _apiGateway = '$_host/api-gateway';
-  static const String _apiGatewayV2 = '$_apiGateway/v2';
+  /// Default origin used when [initialize] is called without `baseUrl`.
+  static const String defaultBaseUrl = 'https://api.biometrysolutions.com';
+  static const String _apiGatewayV2Path = '/api-gateway/v2';
   static String _phrase = '';
 
   // Generate a 7-digit number with unique digits from 0-9.
 
-  final String _token;
+  /// Project API token, or `null` in proxy mode (no `Authorization` header is
+  /// added by the SDK then).
+  final String? _token;
   final http.Client _client;
+
+  /// `<baseUrl>/api-gateway/v2`, the prefix of every request URL.
+  final String _apiGatewayV2;
+
+  /// Extra headers from [initialize] sent on every request.
+  final Map<String, String> _headers;
 
   /// The session ID to be sent with all requests to encapsulate usage.
   final String sessionId;
@@ -46,8 +54,11 @@ class Biometry {
   /// The opaque, customer-provided identity key sent to the API as `user_id`.
   final String _userId;
 
-  /// The full name of the user. Kept for display purposes only — it is not
-  /// transmitted to the v2 API, which identifies users by [_userId].
+  /// The full name passed to [initialize], or an empty string.
+  ///
+  /// Not sent to the API since 2.0.0: the v2 API identifies users by `userId`.
+  @Deprecated('Not used by the v2 API, which identifies users by userId. '
+      'Will be removed in 3.0.0.')
   final String fullName;
 
   /// The path to the image of the person.
@@ -67,33 +78,81 @@ class Biometry {
     this._client,
     this.sessionId,
     this._userId,
+    // ignore: deprecated_member_use_from_same_package
     this.fullName, {
+    required String apiGatewayV2,
+    required Map<String, String> headers,
     String? clientAppName,
     String? clientAppVersion,
-  })  : _clientAppName = clientAppName,
+  })  : _apiGatewayV2 = apiGatewayV2,
+        _headers = headers,
+        _clientAppName = clientAppName,
         _clientAppVersion = clientAppVersion;
 
-  /// Initializes the Biometry class with a token, user ID, full name and an optional HTTP client.
+  /// Starts a Biometry session for [userId] and returns a ready [Biometry].
+  ///
+  /// There are two ways to authenticate:
+  ///
+  /// * **Proxy mode (recommended for apps).** Pass [baseUrl], the address of
+  ///   your own backend, and leave [token] out. The SDK keeps the request
+  ///   paths, so a session start goes to
+  ///   `<baseUrl>/api-gateway/v2/sessions`. Your backend authenticates the app
+  ///   user, adds `Authorization: Bearer <project token>` and forwards the
+  ///   request to `https://api.biometrysolutions.com`. Use [headers] to send
+  ///   your app's own credentials (for example your user's session token) to
+  ///   that backend.
+  /// * **Direct mode.** Pass the project API [token] and no [baseUrl]. Requests
+  ///   go straight to the Biometry API with `Authorization: Bearer <token>`.
+  ///   Anyone who unpacks the app can extract the token, so only use this for
+  ///   testing or internal apps.
+  ///
+  /// [token] is required when [baseUrl] is not set. If both are set, the
+  /// token is sent to [baseUrl].
+  ///
+  /// [headers] are added to every request after `Authorization` and the
+  /// client app headers, so a header with the same name replaces them.
   ///
   /// [clientAppName] and [clientAppVersion] are optional. When provided, they
   /// are sent as `X-Client-App` and `X-Client-App-Version` headers on every
-  /// request to the API gateway.
+  /// request.
+  ///
+  /// [fullName] is deprecated and not sent to the API; it is only kept on the
+  /// [fullName] field for apps that still read it.
+  ///
+  /// Throws an [ArgumentError] if neither [token] nor [baseUrl] is given, or
+  /// if [baseUrl] is not an absolute `http` or `https` URL.
   static Future<Biometry> initialize({
-    required String token,
+    String? token,
     required String userId,
-    required String fullName,
+    @Deprecated('Not used by the v2 API, which identifies users by userId. '
+        'Will be removed in 3.0.0.')
+    String? fullName,
+    String? baseUrl,
+    Map<String, String>? headers,
     http.Client? client,
     String? clientAppName,
     String? clientAppVersion,
   }) async {
+    final apiGatewayV2 = '${_resolveBaseUrl(baseUrl)}$_apiGatewayV2Path';
+    final String? authToken = (token == null || token.isEmpty) ? null : token;
+    if (authToken == null && baseUrl == null) {
+      throw ArgumentError.value(token, 'token',
+          'A token is required unless baseUrl points at your own backend');
+    }
+    final extraHeaders = Map<String, String>.unmodifiable(headers ?? const {});
+
     await _configureAudioSession();
 
     final http.Client httpClient = client ?? http.Client();
     String id = await _fetchSessionId(
-      token,
+      apiGatewayV2,
+      _buildHeaders(
+        token: authToken,
+        clientAppName: clientAppName,
+        clientAppVersion: clientAppVersion,
+        headers: extraHeaders,
+      ),
       httpClient,
-      clientAppName: clientAppName,
-      clientAppVersion: clientAppVersion,
     );
     // Keep a challenge set with setChallenge() before initialize(); otherwise
     // fall back to the deprecated device-generated phrase.
@@ -103,14 +162,55 @@ class Biometry {
       debugPrint("Phrase: $_phrase");
     }
     return Biometry._(
-      token,
+      authToken,
       httpClient,
       id,
       userId,
-      fullName,
+      fullName ?? '',
+      apiGatewayV2: apiGatewayV2,
+      headers: extraHeaders,
       clientAppName: clientAppName,
       clientAppVersion: clientAppVersion,
     );
+  }
+
+  /// Returns [baseUrl] without trailing slashes, or [defaultBaseUrl].
+  static String _resolveBaseUrl(String? baseUrl) {
+    if (baseUrl == null) return defaultBaseUrl;
+    final trimmed = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null ||
+        !(uri.scheme == 'https' || uri.scheme == 'http') ||
+        uri.host.isEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      throw ArgumentError.value(baseUrl, 'baseUrl',
+          'Must be an absolute http or https URL without a query or fragment');
+    }
+    return trimmed;
+  }
+
+  /// Headers sent on every request: `Authorization` (when there is a token),
+  /// the client app headers, then [headers], which replace any earlier header
+  /// with the same name (compared case-insensitively).
+  static Map<String, String> _buildHeaders({
+    String? token,
+    String? clientAppName,
+    String? clientAppVersion,
+    Map<String, String> headers = const {},
+  }) {
+    final result = <String, String>{
+      if (token != null) 'Authorization': 'Bearer $token',
+      if (clientAppName != null && clientAppName.isNotEmpty)
+        'X-Client-App': clientAppName,
+      if (clientAppVersion != null && clientAppVersion.isNotEmpty)
+        'X-Client-App-Version': clientAppVersion,
+    };
+    headers.forEach((name, value) {
+      result.removeWhere((k, _) => k.toLowerCase() == name.toLowerCase());
+      result[name] = value;
+    });
+    return result;
   }
 
   /// Disposes the Biometry class.
@@ -269,21 +369,13 @@ class Biometry {
 
   /// Fetches a new session ID from the API.
   static Future<String> _fetchSessionId(
-    String token,
-    http.Client client, {
-    String? clientAppName,
-    String? clientAppVersion,
-  }) async {
-    final uri = Uri.parse('$_apiGatewayV2/sessions?warmup=true');
+    String apiGatewayV2,
+    Map<String, String> headers,
+    http.Client client,
+  ) async {
+    final uri = Uri.parse('$apiGatewayV2/sessions?warmup=true');
 
-    final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $token';
-    if (clientAppName != null && clientAppName.isNotEmpty) {
-      request.headers['X-Client-App'] = clientAppName;
-    }
-    if (clientAppVersion != null && clientAppVersion.isNotEmpty) {
-      request.headers['X-Client-App-Version'] = clientAppVersion;
-    }
+    final request = http.Request('POST', uri)..headers.addAll(headers);
 
     final response = await client.send(request);
     final responseBody = await http.Response.fromStream(response);
@@ -322,11 +414,10 @@ class Biometry {
     });
 
     final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..headers['Content-Type'] = 'application/json'
       ..body = body;
 
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final response = await _client.send(request);
     if (response.statusCode == 200) {
       // clear all files in the temp directory
@@ -387,7 +478,6 @@ class Biometry {
     final requestJson = jsonEncode({'user_id': _userId});
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(
         await http.MultipartFile.fromPath(
@@ -405,7 +495,7 @@ class Biometry {
       print('Headers: ${request.headers}');
     }
 
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -440,7 +530,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'voice',
@@ -454,7 +543,7 @@ class Biometry {
       print('Fields: ${request.fields}');
     }
 
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -496,7 +585,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'document',
@@ -508,7 +596,7 @@ class Biometry {
       ));
 
     // Send the request and wait for the response stream to complete.
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -548,7 +636,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(
         await http.MultipartFile.fromPath(
@@ -575,7 +662,7 @@ class Biometry {
       print("use_session_video: $useSessionVideo");
     }
 
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -618,7 +705,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'video',
@@ -627,7 +713,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -652,7 +738,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'video',
@@ -661,7 +746,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -687,7 +772,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'voice',
@@ -696,7 +780,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -721,7 +805,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'video',
@@ -730,7 +813,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -749,11 +832,10 @@ class Biometry {
     final uri = Uri.parse(
         '$_apiGatewayV2/consents/${Uri.encodeComponent(consentId)}/approve/${Uri.encodeComponent(_userId)}');
 
-    final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token';
+    final request = http.Request('POST', uri);
 
     debugPrint("request: $request");
-    _addClientAppHeaders(request);
+    _addHeaders(request);
     final response = await _client.send(request);
     final httpResponse = await http.Response.fromStream(response);
     if (httpResponse.statusCode >= 200 && httpResponse.statusCode < 300) {
@@ -835,13 +917,17 @@ class Biometry {
     }
   }
 
-  void _addClientAppHeaders(http.BaseRequest request) {
-    if (_clientAppName != null && _clientAppName!.isNotEmpty) {
-      request.headers['X-Client-App'] = _clientAppName!;
-    }
-    if (_clientAppVersion != null && _clientAppVersion!.isNotEmpty) {
-      request.headers['X-Client-App-Version'] = _clientAppVersion!;
-    }
+  Map<String, String> get _requestHeaders => _buildHeaders(
+        token: _token,
+        clientAppName: _clientAppName,
+        clientAppVersion: _clientAppVersion,
+        headers: _headers,
+      );
+
+  /// Adds `Authorization` (when there is a token), the client app headers and
+  /// the custom headers from [initialize] to [request].
+  void _addHeaders(http.BaseRequest request) {
+    request.headers.addAll(_requestHeaders);
   }
 
   String _stripFileUriPrefix(String uri) {
@@ -872,13 +958,7 @@ class Biometry {
 
     final response = await _client.get(
       uri,
-      headers: {
-        'Authorization': 'Bearer $_token',
-        if (_clientAppName != null && _clientAppName!.isNotEmpty)
-          'X-Client-App': _clientAppName!,
-        if (_clientAppVersion != null && _clientAppVersion!.isNotEmpty)
-          'X-Client-App-Version': _clientAppVersion!,
-      },
+      headers: _requestHeaders,
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
