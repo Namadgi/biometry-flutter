@@ -117,6 +117,10 @@ class Biometry {
   /// [token] is required when [baseUrl] is not set. If both are set, the
   /// token is sent to [baseUrl].
   ///
+  /// [headers] and [headersProvider] only apply in proxy mode (with
+  /// [baseUrl]). Without [baseUrl] they are ignored and a warning is printed
+  /// with `debugPrint`, so your app's credentials never go to Biometry.
+  ///
   /// [headers] are added to every request after `Authorization` and the
   /// client app headers, so a header with the same name (compared
   /// case-insensitively) replaces them. [headersProvider] is called before
@@ -152,7 +156,18 @@ class Biometry {
       throw ArgumentError.value(token, 'token',
           'A token is required unless baseUrl points at your own backend');
     }
-    final extraHeaders = Map<String, String>.unmodifiable(headers ?? const {});
+    // headers and headersProvider are for your own backend (proxy mode). The
+    // Biometry API needs only the token, so they are ignored without baseUrl.
+    final bool proxyMode = baseUrl != null;
+    if (!proxyMode &&
+        ((headers != null && headers.isNotEmpty) || headersProvider != null)) {
+      debugPrint('Biometry: headers and headersProvider only apply with '
+          'baseUrl (proxy mode); they are ignored.');
+    }
+    final extraHeaders = Map<String, String>.unmodifiable(
+        proxyMode ? (headers ?? const {}) : const <String, String>{});
+    final BiometryHeadersProvider? extraHeadersProvider =
+        proxyMode ? headersProvider : null;
 
     await _configureAudioSession();
 
@@ -164,7 +179,7 @@ class Biometry {
         clientAppName: clientAppName,
         clientAppVersion: clientAppVersion,
         headers: extraHeaders,
-        headersProvider: headersProvider,
+        headersProvider: extraHeadersProvider,
       ),
       httpClient,
     );
@@ -186,7 +201,7 @@ class Biometry {
       fullName ?? '',
       apiGatewayV2: apiGatewayV2,
       headers: extraHeaders,
-      headersProvider: headersProvider,
+      headersProvider: extraHeadersProvider,
       clientAppName: clientAppName,
       clientAppVersion: clientAppVersion,
     );
