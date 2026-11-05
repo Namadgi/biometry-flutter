@@ -26,8 +26,11 @@ typedef BiometryHeadersProvider = FutureOr<Map<String, String>> Function();
 ///   - [faceVerify] - Verifies a face in a video against the user's enrolled face template.
 ///   - [voiceVerify] - Verifies a speaker in a video against the user's enrolled voice template.
 ///   - [deepfakeCheck] - Submits a video for asynchronous deepfake analysis.
-///   - [approveConsent] - Records the user's approval of a consent template.
-///   - [getConsentApprovals] - Retrieves the user's recorded consent approvals.
+///   - [giveConsent] - Records the user's authorization and storage consent, which enrollment requires.
+///   - [revokeConsent] - Withdraws the user's authorization and/or storage consent.
+///   - [getConsentStatus] - Retrieves the user's authorization and storage consent.
+///   - [approveConsent] - Records the user's approval of a custom consent template (does not unlock enrollment).
+///   - [getConsentApprovals] - Retrieves the user's recorded consent template approvals.
 ///   - [assertConsent] - Ensures the user has approved a given consent template.
 ///   - [setChallenge] - Uses the liveness challenge your backend issued as the spoken phrase.
 ///
@@ -506,6 +509,9 @@ class Biometry {
   }
 
   /// Enrolls a face using the biometry service.
+  ///
+  /// Requires the user's authorization and storage consent; call
+  /// [giveConsent] first, or this fails with 403.
   Future<http.Response> enrolFace() async {
     if (_faceImagePath == null) {
       throw Exception(
@@ -552,6 +558,9 @@ class Biometry {
   }
 
   /// Enrolls voice using the biometry service.
+  ///
+  /// Requires the user's authorization and storage consent; call
+  /// [giveConsent] first, or this fails with 403.
   Future<http.Response> enrolVoice({
     required File videoFile,
     String? vocabulary,
@@ -862,11 +871,12 @@ class Biometry {
     return response;
   }
 
-  /// Records that the user has approved the consent template [consentId].
+  /// Records that the user has approved the custom consent template
+  /// [consentId].
   ///
-  /// Note: the v2 API has no revoke/unapprove endpoint — unlike v1's
-  /// `allowConsent(consent: false)`, there is currently no way to withdraw
-  /// a recorded approval through this API.
+  /// This does not give the authorization and storage consent that
+  /// [enrolFace] and [enrolVoice] require; use [giveConsent] for that. There
+  /// is no way to withdraw a template approval.
   Future<http.Response> approveConsent({required String consentId}) async {
     final uri = Uri.parse(
         '$_apiGatewayV2/consents/${Uri.encodeComponent(consentId)}/approve/${Uri.encodeComponent(_userId)}');
@@ -1018,6 +1028,120 @@ class Biometry {
     _cachedApprovals = approvals;
     return approvals;
   }
+
+  /// Records that the user consents to Biometry processing ([authorization])
+  /// and storing ([storage]) their biometric data. Both default to `true`.
+  ///
+  /// [enrolFace] and [enrolVoice] require both consents and fail with 403
+  /// without them. Collect the user's agreement in your app first, then call
+  /// this before enrolling. Giving a consent the user already gave is a no-op.
+  ///
+  /// This is not [approveConsent], which records a custom consent template
+  /// and does not unlock enrollment.
+  ///
+  /// Returns the user's consent state after the change. Throws an
+  /// [ArgumentError] if both are `false`, and an [Exception] if the API call
+  /// fails.
+  Future<ConsentStatus> giveConsent({
+    bool authorization = true,
+    bool storage = true,
+  }) =>
+      _setConsents(true, authorization: authorization, storage: storage);
+
+  /// Withdraws the user's [authorization] and/or [storage] consent. Both
+  /// default to `true` (withdraw both). Enrollment fails with 403 afterwards
+  /// until [giveConsent] is called again. Withdrawing a consent the user never
+  /// gave is a no-op.
+  ///
+  /// Returns the user's consent state after the change. Throws an
+  /// [ArgumentError] if both are `false`, and an [Exception] if the API call
+  /// fails.
+  Future<ConsentStatus> revokeConsent({
+    bool authorization = true,
+    bool storage = true,
+  }) =>
+      _setConsents(false, authorization: authorization, storage: storage);
+
+  /// Retrieves whether the user has given authorization and storage consent.
+  /// A user who never gave consent has both `false`.
+  Future<ConsentStatus> getConsentStatus() async {
+    final response = await _client.get(
+      _consentsUri,
+      headers: await _requestHeaders(),
+    );
+    return _parseConsentStatus(response, 'fetch');
+  }
+
+  Uri get _consentsUri =>
+      Uri.parse('$_apiGatewayV2/users/${Uri.encodeComponent(_userId)}/consents');
+
+  /// Sends `PUT /users/{user_id}/consents` setting each selected consent to
+  /// [given].
+  Future<ConsentStatus> _setConsents(
+    bool given, {
+    required bool authorization,
+    required bool storage,
+  }) async {
+    if (!authorization && !storage) {
+      throw ArgumentError(
+          'At least one of authorization or storage must be true');
+    }
+    final request = http.Request('PUT', _consentsUri)
+      ..headers['Content-Type'] = 'application/json'
+      ..body = jsonEncode({
+        if (authorization) 'authorization': given,
+        if (storage) 'storage': given,
+      });
+    await _addHeaders(request);
+    final response =
+        await http.Response.fromStream(await _client.send(request));
+    return _parseConsentStatus(response, given ? 'give' : 'revoke');
+  }
+
+  ConsentStatus _parseConsentStatus(http.Response response, String action) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+          'Failed to $action consent: ${response.statusCode} ${response.body}');
+    }
+    final json = jsonDecode(response.body);
+    final data = json is Map<String, dynamic> ? json['data'] : null;
+    if (data is! Map<String, dynamic>) {
+      throw Exception('Unexpected consent response format: ${response.body}');
+    }
+    return ConsentStatus.fromJson(data);
+  }
+}
+
+/// The user's authorization and storage consent, as returned by
+/// [Biometry.getConsentStatus], [Biometry.giveConsent] and
+/// [Biometry.revokeConsent]. Enrollment requires both.
+class ConsentStatus {
+  /// The user the consent belongs to.
+  final String userId;
+
+  /// Whether the user consents to Biometry processing their biometric data.
+  final bool authorization;
+
+  /// Whether the user consents to Biometry storing their biometric data for
+  /// later verification.
+  final bool storage;
+
+  /// Creates a consent state with the given fields.
+  const ConsentStatus({
+    required this.userId,
+    required this.authorization,
+    required this.storage,
+  });
+
+  /// Whether both consents enrollment requires are given.
+  bool get canEnrol => authorization && storage;
+
+  /// Parses [ConsentStatus] from the API JSON shape.
+  factory ConsentStatus.fromJson(Map<String, dynamic> json) => ConsentStatus(
+        userId: json['user_id'] as String,
+        authorization: json['authorization'] as bool,
+        storage: json['storage'] as bool,
+      );
 }
 
 /// A single consent approval record, as returned by
