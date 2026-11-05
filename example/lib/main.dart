@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:io';
 
 import 'package:biometry/biometry.dart';
 import 'package:biometry/biometry_scanner_widget.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 // theme constants
 class AppTheme {
@@ -105,15 +107,21 @@ class BiometryHomePageState extends State<BiometryHomePage>
     try {
       // Proxy mode: with a base URL the app holds no Biometry token; your
       // backend adds it. Direct mode (token only) is for testing.
+      final appHeaders = baseUrl.isNotEmpty && appToken.isNotEmpty
+          ? {'Authorization': 'Bearer $appToken'}
+          : null;
       _biometry = await Biometry.initialize(
         token: token.isEmpty ? null : token,
         baseUrl: baseUrl.isEmpty ? null : baseUrl,
         userId: userId,
         // Only used in proxy mode: your backend checks it to know the user.
-        headers: baseUrl.isNotEmpty && appToken.isNotEmpty
-            ? {'Authorization': 'Bearer $appToken'}
-            : null,
+        headers: appHeaders,
       );
+      if (baseUrl.isNotEmpty) {
+        // Proxy mode: the backend issues the liveness challenge for this
+        // session and writes its own copy into `phrase`, so show its digits.
+        await _fetchChallenge(baseUrl, appHeaders, _biometry!.sessionId);
+      }
       setState(() {
         _isBiometryInitialized = true;
       });
@@ -122,6 +130,21 @@ class BiometryHomePageState extends State<BiometryHomePage>
     } catch (e) {
       _showSnackBar('Failed to initialize Biometry: $e');
     }
+  }
+
+  /// Asks the backend proxy for this session's liveness challenge and shows
+  /// it (biometry-web-sdk examples/proxy-server: `POST /challenge`).
+  Future<void> _fetchChallenge(
+      String baseUrl, Map<String, String>? headers, String sessionId) async {
+    final response = await http.post(
+      Uri.parse('${baseUrl.replaceFirst(RegExp(r'/+$'), '')}/challenge'),
+      headers: {...?headers, 'content-type': 'application/json'},
+      body: jsonEncode({'session_id': sessionId}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Could not get a liveness challenge: ${response.body}');
+    }
+    Biometry.setChallenge(jsonDecode(response.body)['challenge'] as String);
   }
 
   // method to handle biometric operations

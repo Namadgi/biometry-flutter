@@ -1038,7 +1038,6 @@ void main() {
           token: 'test-token',
           client: mockHttpClient,
           userId: 'john-doe',
-          fullName: 'John Doe',
         );
 
         expect(fresh.phrase, '48719352');
@@ -1055,7 +1054,6 @@ void main() {
           token: 'test-token',
           client: mockHttpClient,
           userId: 'john-doe',
-          fullName: 'John Doe',
         );
 
         expect(fresh.phrase, isNot('48719352'));
@@ -1072,7 +1070,6 @@ void main() {
           token: 'test-token',
           client: mockHttpClient,
           userId: 'john-doe',
-          fullName: 'John Doe',
         );
 
         expect(fresh.phrase, matches(RegExp(r'^[1-9]{7}$')));
