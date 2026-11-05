@@ -757,6 +757,33 @@ void main() {
         expect(fresh.phrase, matches(RegExp(r'^[1-9]{7}$')));
       });
 
+      test('clearChallenge forgets the challenge, so initialize() generates again',
+          () async {
+        Biometry.setChallenge('48719352');
+        Biometry.clearChallenge();
+        expect(biometry.phrase, isEmpty);
+
+        final fresh = await Biometry.initialize(
+          token: 'test-token',
+          client: mockHttpClient,
+          userId: 'john-doe',
+          fullName: 'John Doe',
+        );
+
+        expect(fresh.phrase, matches(RegExp(r'^[1-9]{7}$')));
+      });
+
+      test('the challenge stays set across liveness then voice verify', () async {
+        when(mockHttpClient.send(any)).thenAnswer(
+            (_) async => http.StreamedResponse(bodyStream('{"data":{}}'), 200));
+
+        Biometry.setChallenge('48719352');
+        await biometry.livenessCheck(video: mockFile);
+        await biometry.voiceVerify(video: mockFile);
+
+        expect(biometry.phrase, '48719352');
+      });
+
       test('challengeWords spells out a challenge without an instance', () {
         expect(Biometry.challengeWords('48719352'),
             'Four Eight Seven One Nine Three Five Two');

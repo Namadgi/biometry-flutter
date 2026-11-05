@@ -107,7 +107,7 @@ final biometry = await Biometry.initialize(
 
 ### Setting the Liveness Challenge
 
-The digits the user speaks should be a **challenge issued by your backend**. We recommend 8 distinct digits from `1`-`9`, from a cryptographically secure random source, stored against the user's login attempt, valid for 5 minutes and used once. Pass it to the SDK before showing the scanner, and allow about 10 seconds of recording for 8 digits:
+The digits the user speaks should be a **challenge issued by your backend**. We recommend 8 distinct digits from `1`-`9`, from a cryptographically secure random source, stored against the user's login attempt, valid for at most 5 minutes and used once. Pass it to the SDK before showing the scanner, and allow about 10 seconds of recording for 8 digits:
 
 ```dart
 // challenge comes from your backend, e.g. "48719352"
@@ -119,7 +119,7 @@ print(biometry.phraseWords); // "Four Eight Seven One Nine Three Five Two"
 print(Biometry.challengeWords('48719352'));
 ```
 
-`setChallenge` accepts only the digits `0`-`9`, 7 to 12 of them, and throws an `ArgumentError` otherwise. The SDK displays and sends the challenge exactly as given. It stays set, including across `Biometry.initialize()`, until you call `setChallenge` again (once per login attempt) or `resetPhrase()`.
+`setChallenge` accepts only the digits `0`-`9`, 7 to 12 of them, and throws an `ArgumentError` otherwise. The SDK displays and sends the challenge exactly as given. It stays set, including across `Biometry.initialize()` and across calls (one recording can go to `livenessCheck` and then `voiceVerify`), until you call `setChallenge` again or `Biometry.clearChallenge()`. Call `setChallenge` for every login attempt, and `clearChallenge()` when the user abandons one.
 
 Why 8 digits from 1-9: the voice engine's quality check needs at least 7 recognised words, so one misheard digit in a 7-digit phrase already fails; 8 leaves a margin, and the Biometry console uses 8 too. `0` is left out because people say it as "zero" or "oh", which hurts voice matching.
 

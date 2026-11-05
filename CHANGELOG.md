@@ -1,7 +1,8 @@
 ## [2.1.0] - Unreleased
 
 ### Added
-- `Biometry.setChallenge(challenge)` — use the liveness challenge your backend issued as the phrase the user speaks (BM-526). The SDK displays it and sends it as `phrase` exactly as given. It must be the digits `0`-`9` only, 7 to 12 of them (`Biometry.minChallengeDigits`, `Biometry.maxChallengeDigits`); anything else throws an `ArgumentError` instead of falling back to local digits. A challenge set before `initialize()` is kept; it is replaced only by another `setChallenge` or by `resetPhrase()`. We recommend 8 distinct digits from 1-9.
+- `Biometry.setChallenge(challenge)` — use the liveness challenge your backend issued as the phrase the user speaks (BM-526). The SDK displays it exactly as given and sends it spelled out as words in `phrase`. It must be the digits `0`-`9` only, 7 to 12 of them (`Biometry.minChallengeDigits`, `Biometry.maxChallengeDigits`); anything else throws an `ArgumentError` instead of falling back to local digits. A challenge set before `initialize()` is kept, and stays set across calls (one recording can go to `livenessCheck()` and then `voiceVerify()`); it is replaced only by another `setChallenge`, `clearChallenge()` or `resetPhrase()`. Call `setChallenge` for every login attempt. We recommend 8 distinct digits from 1-9.
+- `Biometry.clearChallenge()` — forgets the challenge when a login attempt is abandoned; the next `initialize()` falls back to the deprecated device-generated digits unless `setChallenge` is called first.
 - `Biometry.challengeWords(challenge)` — spells a challenge out as the words to show (for example in `BiometryScannerWidget(phrase: ...)`) without a `Biometry` instance.
 - `phrase` getter returning the current phrase digits unchanged (for example `"48719352"`).
 

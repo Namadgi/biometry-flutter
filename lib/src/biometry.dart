@@ -190,14 +190,16 @@ class Biometry {
   /// This is the recommended way to choose the phrase. Your backend generates
   /// the digits (we recommend 8 distinct digits from 1-9, from a
   /// cryptographically secure random source), stores them against the user's
-  /// login attempt, expires them after 5 minutes, and uses them once. The app
+  /// login attempt, expires them within 5 minutes, and uses them once. The app
   /// passes them here so the user sees and speaks exactly those digits.
   /// [phraseWords], [phraseAsIntList] and [phrase] then reflect [challenge]
   /// unchanged, and [livenessCheck], [faceVerify] and [voiceVerify] send it as
   /// `phrase`.
   ///
-  /// The challenge stays set, including across [initialize], until you call
-  /// [setChallenge] again (do so for every login attempt) or [resetPhrase].
+  /// The challenge stays set, including across [initialize] and across calls
+  /// (one recording can go to [livenessCheck] and then [voiceVerify]), until
+  /// you call [setChallenge] again or [clearChallenge]. Call [setChallenge]
+  /// for every login attempt, and [clearChallenge] when abandoning one.
   ///
   /// [challenge] must contain only the ASCII digits `0`-`9` (no spaces or
   /// separators), between [minChallengeDigits] and [maxChallengeDigits] of
@@ -216,6 +218,17 @@ class Biometry {
     _validateChallenge(challenge);
     _phrase = challenge;
     _challengeSet = true;
+  }
+
+  /// Forgets the challenge set with [setChallenge], e.g. when the user
+  /// abandons a login attempt, so a stale challenge is never shown again.
+  ///
+  /// The current phrase is cleared, and the next [initialize] falls back to
+  /// generating digits on the device (deprecated) unless you call
+  /// [setChallenge] first.
+  static void clearChallenge() {
+    _phrase = '';
+    _challengeSet = false;
   }
 
   /// Resets the internal phrase to a new random 7-digit sequence with unique
