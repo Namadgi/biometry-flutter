@@ -822,6 +822,40 @@ void main() {
         expect(getHeaders['X-App-Session'], 'app-session-1');
       });
 
+      test('headersProvider is called before every request, after headers',
+          () async {
+        var calls = 0;
+        final b = await Biometry.initialize(
+          baseUrl: proxy,
+          userId: 'john-doe',
+          headers: {'Authorization': 'Bearer static', 'X-Static': 's'},
+          headersProvider: () async => {'authorization': 'Bearer jwt-${++calls}'},
+          client: client,
+        );
+        await b.livenessCheck(video: mockFile);
+        await b.getConsentApprovals();
+
+        expect(calls, 3);
+        expect(requests.map((r) => r.headers['Authorization']),
+            ['Bearer jwt-1', 'Bearer jwt-2']);
+        expect(requests.every((r) => r.headers['X-Static'] == 's'), isTrue);
+        final getHeaders = verify(
+                client.get(any, headers: captureAnyNamed('headers')))
+            .captured
+            .single as Map<String, String>;
+        expect(getHeaders, {'X-Static': 's', 'authorization': 'Bearer jwt-3'});
+      });
+
+      test('a synchronous headersProvider works too', () async {
+        await Biometry.initialize(
+          baseUrl: proxy,
+          userId: 'john-doe',
+          headersProvider: () => {'X-App-Session': 'sync'},
+          client: client,
+        );
+        expect(requests.single.headers['X-App-Session'], 'sync');
+      });
+
       test('a custom Authorization header replaces the token header',
           () async {
         final b = await Biometry.initialize(

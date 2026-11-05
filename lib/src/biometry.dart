@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert'; // for jsonEncode
 import 'dart:developer' as dev;
 import 'dart:io';
@@ -9,6 +10,10 @@ import 'package:flutter_doc_scanner/flutter_doc_scanner.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
+
+/// Returns headers to add to a request. Called before every request, so it can
+/// return a freshly refreshed app session token. See [Biometry.initialize].
+typedef BiometryHeadersProvider = FutureOr<Map<String, String>> Function();
 
 /// A class to handle biometry-related operations against the Biometry v2 API.
 ///   - [initialize] - Initializes the Biometry class with a user ID and either a token or a backend proxy base URL.
@@ -48,6 +53,9 @@ class Biometry {
   /// Extra headers from [initialize] sent on every request.
   final Map<String, String> _headers;
 
+  /// Called before every request; its headers are applied after [_headers].
+  final BiometryHeadersProvider? _headersProvider;
+
   /// The session ID to be sent with all requests to encapsulate usage.
   final String sessionId;
 
@@ -82,10 +90,12 @@ class Biometry {
     this.fullName, {
     required String apiGatewayV2,
     required Map<String, String> headers,
+    BiometryHeadersProvider? headersProvider,
     String? clientAppName,
     String? clientAppVersion,
   })  : _apiGatewayV2 = apiGatewayV2,
         _headers = headers,
+        _headersProvider = headersProvider,
         _clientAppName = clientAppName,
         _clientAppVersion = clientAppVersion;
 
@@ -110,7 +120,11 @@ class Biometry {
   /// token is sent to [baseUrl].
   ///
   /// [headers] are added to every request after `Authorization` and the
-  /// client app headers, so a header with the same name replaces them.
+  /// client app headers, so a header with the same name (compared
+  /// case-insensitively) replaces them. [headersProvider] is called before
+  /// every request, including the session start, and its headers are applied
+  /// last; use it when your app's session token can be refreshed while the
+  /// [Biometry] instance is alive.
   ///
   /// [clientAppName] and [clientAppVersion] are optional. When provided, they
   /// are sent as `X-Client-App` and `X-Client-App-Version` headers on every
@@ -129,6 +143,7 @@ class Biometry {
     String? fullName,
     String? baseUrl,
     Map<String, String>? headers,
+    BiometryHeadersProvider? headersProvider,
     http.Client? client,
     String? clientAppName,
     String? clientAppVersion,
@@ -146,11 +161,12 @@ class Biometry {
     final http.Client httpClient = client ?? http.Client();
     String id = await _fetchSessionId(
       apiGatewayV2,
-      _buildHeaders(
+      await _resolveHeaders(
         token: authToken,
         clientAppName: clientAppName,
         clientAppVersion: clientAppVersion,
         headers: extraHeaders,
+        headersProvider: headersProvider,
       ),
       httpClient,
     );
@@ -169,6 +185,7 @@ class Biometry {
       fullName ?? '',
       apiGatewayV2: apiGatewayV2,
       headers: extraHeaders,
+      headersProvider: headersProvider,
       clientAppName: clientAppName,
       clientAppVersion: clientAppVersion,
     );
@@ -191,14 +208,16 @@ class Biometry {
   }
 
   /// Headers sent on every request: `Authorization` (when there is a token),
-  /// the client app headers, then [headers], which replace any earlier header
-  /// with the same name (compared case-insensitively).
-  static Map<String, String> _buildHeaders({
+  /// the client app headers, then [headers], then the result of
+  /// [headersProvider]. Each layer replaces any earlier header with the same
+  /// name (compared case-insensitively).
+  static Future<Map<String, String>> _resolveHeaders({
     String? token,
     String? clientAppName,
     String? clientAppVersion,
     Map<String, String> headers = const {},
-  }) {
+    BiometryHeadersProvider? headersProvider,
+  }) async {
     final result = <String, String>{
       if (token != null) 'Authorization': 'Bearer $token',
       if (clientAppName != null && clientAppName.isNotEmpty)
@@ -206,10 +225,15 @@ class Biometry {
       if (clientAppVersion != null && clientAppVersion.isNotEmpty)
         'X-Client-App-Version': clientAppVersion,
     };
-    headers.forEach((name, value) {
-      result.removeWhere((k, _) => k.toLowerCase() == name.toLowerCase());
-      result[name] = value;
-    });
+    void apply(Map<String, String> layer) {
+      layer.forEach((name, value) {
+        result.removeWhere((k, _) => k.toLowerCase() == name.toLowerCase());
+        result[name] = value;
+      });
+    }
+
+    apply(headers);
+    if (headersProvider != null) apply(await headersProvider());
     return result;
   }
 
@@ -417,7 +441,7 @@ class Biometry {
       ..headers['Content-Type'] = 'application/json'
       ..body = body;
 
-    _addHeaders(request);
+    await _addHeaders(request);
     final response = await _client.send(request);
     if (response.statusCode == 200) {
       // clear all files in the temp directory
@@ -495,7 +519,7 @@ class Biometry {
       print('Headers: ${request.headers}');
     }
 
-    _addHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -543,7 +567,7 @@ class Biometry {
       print('Fields: ${request.fields}');
     }
 
-    _addHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -596,7 +620,7 @@ class Biometry {
       ));
 
     // Send the request and wait for the response stream to complete.
-    _addHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -662,7 +686,7 @@ class Biometry {
       print("use_session_video: $useSessionVideo");
     }
 
-    _addHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -713,7 +737,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -746,7 +770,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -780,7 +804,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -813,7 +837,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -835,7 +859,7 @@ class Biometry {
     final request = http.Request('POST', uri);
 
     debugPrint("request: $request");
-    _addHeaders(request);
+    await _addHeaders(request);
     final response = await _client.send(request);
     final httpResponse = await http.Response.fromStream(response);
     if (httpResponse.statusCode >= 200 && httpResponse.statusCode < 300) {
@@ -917,17 +941,18 @@ class Biometry {
     }
   }
 
-  Map<String, String> get _requestHeaders => _buildHeaders(
+  Future<Map<String, String>> _requestHeaders() => _resolveHeaders(
         token: _token,
         clientAppName: _clientAppName,
         clientAppVersion: _clientAppVersion,
         headers: _headers,
+        headersProvider: _headersProvider,
       );
 
   /// Adds `Authorization` (when there is a token), the client app headers and
   /// the custom headers from [initialize] to [request].
-  void _addHeaders(http.BaseRequest request) {
-    request.headers.addAll(_requestHeaders);
+  Future<void> _addHeaders(http.BaseRequest request) async {
+    request.headers.addAll(await _requestHeaders());
   }
 
   String _stripFileUriPrefix(String uri) {
@@ -958,7 +983,7 @@ class Biometry {
 
     final response = await _client.get(
       uri,
-      headers: _requestHeaders,
+      headers: await _requestHeaders(),
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
