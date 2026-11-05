@@ -10,7 +10,7 @@ This package is tailored specifically for developers building high-security appl
 - **Liveness & Deepfake Detection**: Anti-spoofing checks (face liveness, active speaker detection, visual speech recognition) and asynchronous deepfake analysis.
 - **Document Scanning & Verification**: Built-in scanning using the `flutter_doc_scanner` plugin.
 - **Biometric Scanner Widget**: User-friendly camera widget with guided video capture.
-- **Consent Management**: Approve and look up consent-template approvals recorded for a user.
+- **Consent Management**: Give, withdraw and check the user's authorization and storage consent that enrollment requires, and record approvals of your own custom consent templates.
 - **Extensible & Testable API**: Designed for ease of testing and extensibility.
 
 ## Getting Started
@@ -105,11 +105,10 @@ The SDK keeps the request paths and only swaps the host, so it calls `https://yo
 3. Never pass the request body through. Rebuild it from the fields and files that call needs, **set** `user_id` to the signed-in user (do not just compare it: the gateway's JSON decoder matches keys case-insensitively, so a duplicate `USER_ID` key can slip past a check), keep a `session_id` only if it was started for that user, and drop the query string (except `warmup=true` on session start).
 4. Send the rebuilt request to `https://api.biometrysolutions.com` with the same path, adding `Authorization: Bearer <your Biometry API token>`.
 
-In proxy mode your backend also does two jobs the device must not do:
+In proxy mode your backend also owns two things:
 
-- **Consent.** Record the user's authorization and storage consent server-to-server with your API key (`/api-consent/consent` and `/api-consent/strg-consent`, with your `user_id` as `user_fullname`), for example in your onboarding flow before the first enrollment. `approveConsent()` / `getConsentApprovals()` are for your own custom consent templates and do **not** unlock enrollment.
+- **Consent.** Either let the app's `giveConsent()` / `revokeConsent()` / `getConsentStatus()` through (`PUT`/`GET /api-gateway/v2/users/{user_id}/consents`: set `{user_id}` to the signed-in user and forward only the boolean `authorization` and `storage` fields), or record the consent yourself with the same endpoint, for example in your onboarding flow. Either way, do it before the first enrollment (see [Consent](#consent)).
 - **Liveness challenge.** Your backend issues the digits the user reads for the current session, keeps its own copy, and writes it into `phrase` on liveness and voice-verify (each may use it once per session), ignoring the phrase the app sends. face-verify needs no challenge. In the app, fetch the challenge from your backend (`POST /challenge` with the `sessionId` in the example proxy) and pass it to `Biometry.setChallenge(challenge)` before showing the scanner, so the user reads your backend's digits, not ones generated on the device (see [Setting the Liveness Challenge](#setting-the-liveness-challenge)). Call `Biometry.clearChallenge()` if the user abandons the attempt. The example app does this when you fill in the backend proxy URL. Make the recording window (`scanTime`) long enough for 8 digits, about 10 seconds.
-- Your user ids must be at least 3 characters: the consent service requires it.
 
 ```dart
 final biometry = await Biometry.initialize(baseUrl: backend, userId: userId, headersProvider: appAuth);
@@ -219,6 +218,8 @@ final response = await biometry.docAuth(
 
 ### Face & Voice Enrollment
 
+Enrollment requires the user's consent first (see [Consent](#consent)); without it the API answers 403.
+
 Enrolls a face (captured via `docAuth()`) or a voice recording against `userId`, for later verification:
 
 ```dart
@@ -256,20 +257,39 @@ final deepfake = await biometry.deepfakeCheck(video: videoFile);
 
 `livenessCheck` accepts an optional `excludeServices` list (`face_liveness_detection`, `active_speaker_detection`, `visual_speech_recognition`, `face_recognition`, `voice_recognition`) to skip specific checks. `deepfakeCheck` submits the video for asynchronous analysis — the response body contains a check `status` (`pending`/`processing`/`completed`/`failed`), not an immediate verdict.
 
-### Consent Handling
+### Consent
 
-Consent templates (their `journey_id`, header, and body text) are configured in the Biometry dashboard, not by this SDK. The SDK only records and looks up **approvals** of an existing template ID. These are your own custom consent documents: they do **not** record the authorization and storage consent that face/voice verification and enrollment require (record those from your backend, see [Proxy mode](#proxy-mode-recommended)):
+Face and voice enrollment require the user's **authorization** consent (Biometry may process their biometric data) and **storage** consent (Biometry may store it for later verification). Ask the user in your app, then record their answer before enrolling:
 
 ```dart
-final response = await biometry.approveConsent(consentId: 'your-consent-template-id');
+// Gives both consents. Calling it again is harmless.
+final status = await biometry.giveConsent();
+print(status.canEnrol); // true
 
+await biometry.enrolFace();
+
+// Check what is recorded for the user.
+final current = await biometry.getConsentStatus();
+
+// Withdraw both (or pass authorization: false / storage: false to keep one).
+// Enrollment fails with 403 until giveConsent() is called again.
+await biometry.revokeConsent();
+```
+
+Consent is stored against the `userId`, so it only has to be given once per user, not once per session. User ids must be 3 to 128 characters of `A-Z a-z 0-9 . _ : @ -`.
+
+#### Custom consent templates
+
+`approveConsent()`, `getConsentApprovals()` and `assertConsent()` record and check approvals of your own custom consent templates (created with `POST /v2/consents`). They are separate from the consent above and do **not** unlock enrollment.
+
+```dart
+await biometry.approveConsent(consentId: 'your-consent-template-id');
 final approvals = await biometry.getConsentApprovals();
-
 // Throws if the user hasn't approved this consent template.
 await biometry.assertConsent(consentId: 'your-consent-template-id');
 ```
 
-> **Note:** the v2 API does not currently support revoking a recorded approval.
+A template approval cannot be withdrawn.
 
 ### Ending a Session
 
