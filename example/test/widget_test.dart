@@ -14,18 +14,25 @@ void main() {
     expect(find.text('Initialize Session'), findsOneWidget); // Section header
 
     // Verify form fields by their labels.
-    expect(find.widgetWithText(TextFormField, 'Token'), findsOneWidget);
-    expect(find.widgetWithText(TextFormField, 'Full Name'), findsOneWidget);
+    expect(
+        find.widgetWithText(TextFormField, 'Backend proxy URL (recommended)'),
+        findsOneWidget);
+    expect(
+        find.widgetWithText(
+            TextFormField, 'Token (direct mode, testing only)'),
+        findsOneWidget);
 
     // Verify the primary initialize button exists.
     final initButton = find.text('Initialize Biometry');
     expect(initButton, findsOneWidget);
 
-    // Tap initialize without inputs to trigger validation snackbar for token.
+    // Tap initialize without inputs to trigger the validation snackbar: it
+    // needs either a backend proxy URL or a token.
     await tester.tap(initButton);
     await tester.pumpAndSettle();
 
     // Expect the snackbar with the validation message.
-    expect(find.text('Please enter a valid token.'), findsOneWidget);
+    expect(find.text('Enter a backend proxy URL, or a token for direct mode.'),
+        findsOneWidget);
   });
 }
