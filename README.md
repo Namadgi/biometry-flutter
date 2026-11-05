@@ -108,7 +108,17 @@ The SDK keeps the request paths and only swaps the host, so it calls `https://yo
 In proxy mode your backend also does two jobs the device must not do:
 
 - **Consent.** Record the user's authorization and storage consent server-to-server with your API key (`/api-consent/consent` and `/api-consent/strg-consent`, with your `user_id` as `user_fullname`), for example in your onboarding flow before the first enrollment. `approveConsent()` / `getConsentApprovals()` are for your own custom consent templates and do **not** unlock enrollment.
-- **Liveness challenge.** Your backend issues the digits the user reads, keeps its own copy, and writes it into `phrase` on liveness, face-verify and voice-verify, ignoring the phrase the app sends.
+- **Liveness challenge.** Your backend issues the digits the user reads for the current session, keeps its own copy, and writes it into `phrase` on liveness and voice-verify (each may use it once per session), ignoring the phrase the app sends. face-verify needs no challenge. In the app, fetch the challenge from your backend (`POST /challenge` with the `sessionId` in the example proxy) and pass it to `Biometry.setChallenge(challenge)` before showing the scanner, so the user reads your backend's digits, not ones generated on the device. Make the recording window (`scanTime`) long enough for 8 digits, about 10 seconds.
+- Your user ids must be at least 3 characters: the consent service requires it.
+
+```dart
+final biometry = await Biometry.initialize(baseUrl: backend, userId: userId, headersProvider: appAuth);
+final res = await http.post(Uri.parse('$backend/challenge'),
+    headers: {...await appAuth(), 'content-type': 'application/json'},
+    body: jsonEncode({'session_id': biometry.sessionId}));
+Biometry.setChallenge(jsonDecode(res.body)['challenge'] as String);
+// Now show BiometryScannerWidget; liveness and voice-verify will use this challenge.
+```
 
 See [Backend proxy for client SDKs](https://developer.biometrysolutions.com/concepts/backend-proxy/) on the developer portal for a full example.
 
