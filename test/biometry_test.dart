@@ -616,6 +616,151 @@ void main() {
       });
     });
 
+    group('user consents', () {
+      const consentsUrl = '$v2Base/users/john-doe/consents';
+
+      // Captures each PUT to the consents endpoint and answers with the
+      // state the request asked for.
+      List<http.Request> stubConsentPuts({int status = 200}) {
+        final puts = <http.Request>[];
+        when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+          final request = invocation.positionalArguments[0] as http.Request;
+          if (request.url.toString() != consentsUrl) {
+            fail('Unexpected URL call: ${request.url}');
+          }
+          puts.add(request);
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.StreamedResponse(
+            bodyStream(jsonEncode({
+              'data': {
+                'user_id': 'john-doe',
+                'authorization': body['authorization'] ?? false,
+                'storage': body['storage'] ?? false,
+              },
+              'meta': {},
+            })),
+            status,
+          );
+        });
+        return puts;
+      }
+
+      test('giveConsent gives both consents by default', () async {
+        final puts = stubConsentPuts();
+
+        final status = await biometry.giveConsent();
+
+        expect(puts, hasLength(1));
+        expect(puts.single.method, 'PUT');
+        expect(puts.single.headers['Authorization'], 'Bearer test-token');
+        expect(puts.single.headers['Content-Type'], startsWith('application/json'));
+        expect(jsonDecode(puts.single.body),
+            {'authorization': true, 'storage': true});
+        expect(status.userId, 'john-doe');
+        expect(status.authorization, isTrue);
+        expect(status.storage, isTrue);
+        expect(status.canEnrol, isTrue);
+      });
+
+      test('giveConsent sends only the selected consent', () async {
+        final puts = stubConsentPuts();
+
+        await biometry.giveConsent(storage: false);
+
+        expect(jsonDecode(puts.single.body), {'authorization': true});
+      });
+
+      test('revokeConsent withdraws the selected consents', () async {
+        final puts = stubConsentPuts();
+
+        await biometry.revokeConsent();
+        await biometry.revokeConsent(authorization: false);
+
+        expect(jsonDecode(puts[0].body),
+            {'authorization': false, 'storage': false});
+        expect(jsonDecode(puts[1].body), {'storage': false});
+      });
+
+      test('give and revoke reject selecting nothing', () {
+        expect(() => biometry.giveConsent(authorization: false, storage: false),
+            throwsArgumentError);
+        expect(
+            () => biometry.revokeConsent(authorization: false, storage: false),
+            throwsArgumentError);
+      });
+
+      test('giveConsent throws when the API call fails', () async {
+        stubConsentPuts(status: 400);
+
+        expect(() => biometry.giveConsent(), throwsA(isA<Exception>()));
+      });
+
+      test('getConsentStatus returns the recorded state', () async {
+        Uri? capturedUri;
+        when(mockHttpClient.get(any, headers: anyNamed('headers')))
+            .thenAnswer((invocation) async {
+          capturedUri = invocation.positionalArguments[0] as Uri;
+          return http.Response(
+            '{"data":{"user_id":"john-doe","authorization":true,'
+            '"storage":false},"meta":{}}',
+            200,
+          );
+        });
+
+        final status = await biometry.getConsentStatus();
+
+        expect(capturedUri.toString(), consentsUrl);
+        expect(status.authorization, isTrue);
+        expect(status.storage, isFalse);
+        expect(status.canEnrol, isFalse);
+      });
+
+      test('direct mode calls the v2 consents URL with the user id encoded',
+          () async {
+        const encodedUrl = '$v2Base/users/user%201%2F%C3%A4/consents';
+        final b = await Biometry.initialize(
+          token: 'test-token',
+          client: mockHttpClient,
+          userId: 'user 1/ä',
+        );
+        final sent = <http.Request>[];
+        when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+          final request = invocation.positionalArguments[0] as http.Request;
+          sent.add(request);
+          return http.StreamedResponse(
+            bodyStream('{"data":{"user_id":"user 1/ä",'
+                '"authorization":true,"storage":true},"meta":{}}'),
+            200,
+          );
+        });
+        Uri? getUri;
+        when(mockHttpClient.get(any, headers: anyNamed('headers')))
+            .thenAnswer((invocation) async {
+          getUri = invocation.positionalArguments[0] as Uri;
+          return http.Response(
+            '{"data":{"user_id":"user 1/ä","authorization":true,'
+            '"storage":true},"meta":{}}',
+            200,
+          );
+        });
+
+        await b.giveConsent();
+        await b.revokeConsent();
+        await b.getConsentStatus();
+
+        expect(sent.map((r) => r.url.toString()), [encodedUrl, encodedUrl]);
+        expect(sent.map((r) => r.method), ['PUT', 'PUT']);
+        expect(getUri.toString(), encodedUrl);
+      });
+
+      test('getConsentStatus throws when the API call fails', () async {
+        when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
+            (_) async => http.Response('{"error":"unauthorized"}', 401));
+
+        expect(() => biometry.getConsentStatus(), throwsA(isA<Exception>()));
+      });
+    });
+
     group('client app headers', () {
       test('are sent on session start and subsequent requests when provided',
           () async {
@@ -962,6 +1107,55 @@ void main() {
         expect(getCall[0].toString(),
             '$proxy/consents/my-approvals/john-doe');
         expect((getCall[1] as Map).containsKey('Authorization'), isFalse);
+      });
+
+      test('consent methods throw StateError without sending a request',
+          () async {
+        final b = await Biometry.initialize(
+          baseUrl: proxy,
+          userId: 'john-doe',
+          client: client,
+        );
+        requests.clear();
+        clearInteractions(client);
+
+        final calls = <String, Future<ConsentStatus> Function()>{
+          'giveConsent': b.giveConsent,
+          'revokeConsent': b.revokeConsent,
+          'getConsentStatus': b.getConsentStatus,
+        };
+        for (final entry in calls.entries) {
+          await expectLater(
+            entry.value(),
+            throwsA(isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                startsWith('${entry.key} is not available in proxy mode'),
+                contains('POST /onboarding/consent'),
+              ),
+            )),
+          );
+        }
+
+        expect(requests, isEmpty);
+        verifyNever(client.send(any));
+        verifyNever(client.get(any, headers: anyNamed('headers')));
+      });
+
+      test('consent methods throw StateError even with a token', () async {
+        final b = await Biometry.initialize(
+          token: 'test-token',
+          baseUrl: proxy,
+          userId: 'john-doe',
+          client: client,
+        );
+        requests.clear();
+
+        await expectLater(b.giveConsent(), throwsStateError);
+        await expectLater(b.revokeConsent(), throwsStateError);
+        await expectLater(b.getConsentStatus(), throwsStateError);
+        expect(requests, isEmpty);
       });
 
       test('sends custom headers on every request', () async {

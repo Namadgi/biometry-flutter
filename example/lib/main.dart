@@ -61,7 +61,12 @@ class BiometryHomePageState extends State<BiometryHomePage>
   // accepts "demo-app-token".
   final TextEditingController _appTokenController = TextEditingController();
   final TextEditingController _userIdController = TextEditingController();
-  final TextEditingController _consentIdController = TextEditingController();
+  // The user ticked the consent checkbox in this app.
+  bool _consentAgreed = false;
+  ConsentStatus? _consentStatus;
+  // Set in proxy mode: your backend records consent, not the app.
+  String? _proxyBaseUrl;
+  Map<String, String>? _proxyHeaders;
 
   File? _capturedVideo;
   String _result = '';
@@ -90,7 +95,6 @@ class BiometryHomePageState extends State<BiometryHomePage>
     _baseUrlController.dispose();
     _appTokenController.dispose();
     _userIdController.dispose();
-    _consentIdController.dispose();
     _animationController.dispose();
     super.dispose();
   }
@@ -121,6 +125,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
       _isInitializing = true;
       _isBiometryInitialized = false;
       _capturedVideo = null;
+      // The recorded consent belonged to the previous session's user.
+      _consentStatus = null;
     });
     if (oldVideo != null) {
       try {
@@ -147,6 +153,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
         headers: appHeaders,
       );
       if (!mounted || generation != _initGeneration) return;
+      _proxyBaseUrl = baseUrl.isEmpty ? null : baseUrl;
+      _proxyHeaders = appHeaders;
       if (baseUrl.isNotEmpty) {
         // Proxy mode: the backend issues the liveness challenge for this
         // session and writes its own copy into `phrase`, so show its digits.
@@ -246,20 +254,10 @@ class BiometryHomePageState extends State<BiometryHomePage>
     }
   }
 
-  Future<void> _approveConsent() async {
-    final consentId = _consentIdController.text.trim();
-    if (consentId.isEmpty) {
-      _showSnackBar('Please enter a consent template ID.');
-      return;
-    }
-    await _executeBiometricOperation(
-      operationCallback: () => _biometry!.approveConsent(consentId: consentId),
-      successMessage: 'Consent approved successfully!',
-      errorMessage: 'Failed to approve consent',
-    );
-  }
-
-  Future<void> _getConsentApprovals() async {
+  /// Gives or withdraws the user's authorization and storage consent, or
+  /// reads it back. Enrollment needs both consents (403 without them).
+  Future<void> _runConsentOperation(
+      Future<ConsentStatus> Function() operation, String action) async {
     if (_biometry == null || !_isBiometryInitialized) {
       _showSnackBar('Biometry is not initialized.');
       return;
@@ -270,14 +268,18 @@ class BiometryHomePageState extends State<BiometryHomePage>
       _animationController.forward();
     });
     try {
-      final approvals = await _biometry!.getConsentApprovals();
+      final status = await operation();
       setState(() {
-        _result = _formatConsentApprovals(approvals);
+        _consentStatus = status;
+        _result = 'Consent for ${status.userId}\n\n'
+            '  • Authorization: ${status.authorization ? 'given' : 'not given'}\n'
+            '  • Storage: ${status.storage ? 'given' : 'not given'}\n\n'
+            '${status.canEnrol ? 'Ready to enroll.' : 'Enrollment needs both consents.'}';
         _showResultsPanel = true;
       });
     } catch (e) {
       setState(() {
-        _result = 'Failed to fetch consent approvals: $e';
+        _result = 'Failed to $action consent: $e';
         _showResultsPanel = true;
       });
     } finally {
@@ -288,15 +290,52 @@ class BiometryHomePageState extends State<BiometryHomePage>
     }
   }
 
-  String _formatConsentApprovals(List<ConsentApproval> approvals) {
-    if (approvals.isEmpty) {
-      return 'No consent approvals recorded yet.';
+  Future<void> _giveConsent() async {
+    if (!_consentAgreed) {
+      _showSnackBar('Tick the consent checkbox first.');
+      return;
     }
-    final entries = approvals
-        .map(
-            (a) => '  • ${a.consentId} — approved on ${a.approvedAt.toLocal()}')
-        .join('\n');
-    return 'Consent Approvals for ${_userIdController.text.trim()}\n\n$entries';
+    final proxy = _proxyBaseUrl;
+    if (proxy != null) {
+      await _runConsentOperation(() => _recordConsentOnBackend(proxy), 'give');
+      return;
+    }
+    await _runConsentOperation(() => _biometry!.giveConsent(), 'give');
+  }
+
+  /// Proxy mode: the example proxy (biometry-web-sdk examples/proxy-server)
+  /// does not forward the SDK's consent calls; it records consent for the
+  /// signed-in user itself (`POST /onboarding/consent`).
+  Future<ConsentStatus> _recordConsentOnBackend(String baseUrl) async {
+    final response = await http.post(
+      Uri.parse('${baseUrl.replaceFirst(RegExp(r'/+$'), '')}/onboarding/consent'),
+      headers: {...?_proxyHeaders, 'content-type': 'application/json'},
+      body: jsonEncode({'accepted': true}),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('${response.statusCode} ${response.body}');
+    }
+    return ConsentStatus(
+        userId: _userIdController.text.trim(),
+        authorization: true,
+        storage: true);
+  }
+
+  Future<void> _checkConsent() async {
+    if (_proxyBaseUrl != null) {
+      _showSnackBar('In proxy mode your backend records and checks consent.');
+      return;
+    }
+    await _runConsentOperation(() => _biometry!.getConsentStatus(), 'fetch');
+  }
+
+  Future<void> _revokeConsent() async {
+    if (_proxyBaseUrl != null) {
+      _showSnackBar('In proxy mode your backend records and revokes consent.');
+      return;
+    }
+    await _runConsentOperation(() => _biometry!.revokeConsent(), 'revoke');
+    setState(() => _consentAgreed = false);
   }
 
   Future<void> _endSession() async {
@@ -710,48 +749,71 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'Custom consent templates you created for your own '
-                              'documents. They do not unlock enrollment: enrollment '
-                              'needs authorization and storage consent, which your '
-                              'backend records.',
+                              'Enrollment requires the user\'s authorization and '
+                              'storage consent to process and store their biometric '
+                              'data. Ask for it before enrolling. In proxy mode your '
+                              'backend records it (Give Consent calls its POST '
+                              '/onboarding/consent). Custom consent templates do not '
+                              'unlock enrollment.',
                               style: TextStyle(
                                 color: Color(0xFF9CA3AF),
                                 fontSize: 14,
                               ),
                             ),
-                            const SizedBox(height: 16),
-                            TextFormField(
-                              controller: _consentIdController,
-                              decoration: InputDecoration(
-                                labelText: 'Consent Template ID',
-                                labelStyle: TextStyle(
-                                    color: AppTheme.textColorSecondary),
-                                prefixIcon: Icon(Icons.fact_check,
-                                    color: AppTheme.accentColor),
-                                filled: true,
-                                fillColor: const Color(0xFF1F2937),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide.none,
-                                ),
-                                contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 12),
+                            const SizedBox(height: 8),
+                            CheckboxListTile(
+                              value: _consentAgreed,
+                              onChanged: (value) =>
+                                  setState(() => _consentAgreed = value ?? false),
+                              activeColor: AppTheme.accentColor,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: const Text(
+                                'I agree that Biometry may process and store my '
+                                'biometric data to verify my identity.',
+                                style: TextStyle(color: Colors.white),
                               ),
-                              style: const TextStyle(color: Colors.white),
                             ),
-                            const SizedBox(height: 12),
+                            if (_consentStatus != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Text(
+                                  _consentStatus!.canEnrol
+                                      ? 'Consent recorded: ready to enroll.'
+                                      : 'Consent not recorded: enrollment will fail.',
+                                  style: TextStyle(
+                                    color: _consentStatus!.canEnrol
+                                        ? AppTheme.accentColor
+                                        : const Color(0xFFF87171),
+                                  ),
+                                ),
+                              ),
                             _buildActionButton(
-                              label: 'Approve Consent',
+                              label: 'Give Consent',
                               icon: Icons.check_circle,
-                              onPressed: _approveConsent,
+                              onPressed: _giveConsent,
                               tooltip:
-                                  'Record approval of the consent template above',
+                                  'Record the user\'s authorization and storage consent',
                             ),
                             _buildActionButton(
-                              label: 'View Consent Approvals',
-                              icon: Icons.history,
-                              onPressed: _getConsentApprovals,
-                              tooltip: 'Retrieve recorded consent approvals',
+                              label: 'Check Consent',
+                              icon: Icons.fact_check,
+                              // Proxy mode: the SDK's consent calls throw;
+                              // your backend checks consent instead.
+                              onPressed:
+                                  _proxyBaseUrl == null ? _checkConsent : null,
+                              tooltip: _proxyBaseUrl == null
+                                  ? 'Show the consent recorded for this user'
+                                  : 'In proxy mode your backend checks consent',
+                            ),
+                            _buildActionButton(
+                              label: 'Revoke Consent',
+                              icon: Icons.block,
+                              onPressed:
+                                  _proxyBaseUrl == null ? _revokeConsent : null,
+                              tooltip: _proxyBaseUrl == null
+                                  ? 'Withdraw both consents'
+                                  : 'In proxy mode your backend withdraws consent',
                             ),
                           ],
                         ),
