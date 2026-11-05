@@ -54,6 +54,10 @@ class BiometryHomePageState extends State<BiometryHomePage>
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _baseUrlController = TextEditingController();
+  // Your app's own session token, sent to your backend proxy. The example
+  // proxy (biometry-web-sdk examples/proxy-server, ALLOW_DEMO_AUTH=1)
+  // accepts "demo-app-token".
+  final TextEditingController _appTokenController = TextEditingController();
   final TextEditingController _userIdController = TextEditingController();
   final TextEditingController _consentIdController = TextEditingController();
 
@@ -78,6 +82,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
   void dispose() {
     _tokenController.dispose();
     _baseUrlController.dispose();
+    _appTokenController.dispose();
     _userIdController.dispose();
     _consentIdController.dispose();
     _animationController.dispose();
@@ -87,6 +92,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
   Future<void> _initializeBiometry() async {
     final token = _tokenController.text.trim();
     final baseUrl = _baseUrlController.text.trim();
+    final appToken = _appTokenController.text.trim();
     if (token.isEmpty && baseUrl.isEmpty) {
       _showSnackBar('Enter a backend proxy URL, or a token for direct mode.');
       return;
@@ -103,6 +109,10 @@ class BiometryHomePageState extends State<BiometryHomePage>
         token: token.isEmpty ? null : token,
         baseUrl: baseUrl.isEmpty ? null : baseUrl,
         userId: userId,
+        // Only used in proxy mode: your backend checks it to know the user.
+        headers: baseUrl.isNotEmpty && appToken.isNotEmpty
+            ? {'Authorization': 'Bearer $appToken'}
+            : null,
       );
       setState(() {
         _isBiometryInitialized = true;
@@ -526,6 +536,28 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             ),
                             style: const TextStyle(color: Colors.white),
                             keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.next,
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _appTokenController,
+                            decoration: InputDecoration(
+                              labelText: 'App token for your backend (proxy mode)',
+                              hintText: 'demo-app-token',
+                              labelStyle:
+                                  TextStyle(color: AppTheme.textColorSecondary),
+                              prefixIcon: Icon(Icons.lock,
+                                  color: AppTheme.accentColor),
+                              filled: true,
+                              fillColor: const Color(0xFF1F2937),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 12),
+                            ),
+                            style: const TextStyle(color: Colors.white),
                             textInputAction: TextInputAction.next,
                           ),
                           const SizedBox(height: 12),
