@@ -8,6 +8,7 @@
 - **Proxy mode** (BM-527): `baseUrl` on `Biometry.initialize()` sends every request to your own backend instead of the Biometry API, so the app does not need to hold your project API token. The request paths are kept (`<baseUrl>/api-gateway/v2/...`), so the backend can forward them unchanged and add `Authorization` server-side.
 - `headers` on `Biometry.initialize()`: extra headers sent on every request, for example your app's own session token for the proxy. They replace SDK headers with the same name (compared case-insensitively), including `Authorization`.
 - `headersProvider` on `Biometry.initialize()` (a `BiometryHeadersProvider`, `FutureOr<Map<String, String>> Function()`): called before every request and applied after `headers`, so an app session token that is refreshed while the `Biometry` instance is alive is picked up.
+- `headers` and `headersProvider` only apply with `baseUrl` (proxy mode). Without `baseUrl` they are ignored and a warning is printed with `debugPrint`, so direct calls to Biometry carry only the token.
 - `Biometry.defaultBaseUrl` constant (`https://api.biometrysolutions.com`).
 
 ### Changed

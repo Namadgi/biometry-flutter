@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:biometry/src/biometry.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -719,6 +720,77 @@ void main() {
           throwsA(isA<ArgumentError>()),
         );
         verifyNever(client.send(any));
+      });
+
+      test('ignores headers and headersProvider, with a debugPrint warning',
+          () async {
+        final printed = <String>[];
+        final originalDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) printed.add(message);
+        };
+        addTearDown(() => debugPrint = originalDebugPrint);
+
+        final requests = <http.BaseRequest>[];
+        final client = MockClient();
+        when(client.send(any)).thenAnswer((invocation) async {
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
+          requests.add(request);
+          final body = request.url.path.endsWith('/sessions')
+              ? '{"data":{"session_id":"s-1"}}'
+              : '{"data":{}}';
+          return http.StreamedResponse(bodyStream(body), 200);
+        });
+        when(client.get(any, headers: anyNamed('headers'))).thenAnswer(
+            (_) async => http.Response('{"data":[]}', 200));
+        var providerCalls = 0;
+
+        final direct = await Biometry.initialize(
+          token: 'test-token',
+          userId: 'john-doe',
+          headers: {'Authorization': 'Bearer app-jwt', 'X-App': '1'},
+          headersProvider: () {
+            providerCalls++;
+            return {'X-Provided': '1'};
+          },
+          client: client,
+        );
+        await direct.livenessCheck(video: mockFile);
+        await direct.getConsentApprovals();
+
+        expect(
+            printed.where((m) => m.contains('only apply with baseUrl')),
+            hasLength(1));
+        expect(providerCalls, 0);
+        for (final r in requests) {
+          expect(r.url.toString(), startsWith(v2Base));
+          expect(r.headers['Authorization'], 'Bearer test-token');
+          expect(r.headers.containsKey('X-App'), isFalse);
+          expect(r.headers.containsKey('X-Provided'), isFalse);
+        }
+        final getHeaders = verify(
+                client.get(any, headers: captureAnyNamed('headers')))
+            .captured
+            .single as Map<String, String>;
+        expect(getHeaders, {'Authorization': 'Bearer test-token'});
+      });
+
+      test('does not warn without headers in direct mode', () async {
+        final printed = <String>[];
+        final originalDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) printed.add(message);
+        };
+        addTearDown(() => debugPrint = originalDebugPrint);
+
+        await Biometry.initialize(
+          token: 'test-token',
+          userId: 'john-doe',
+          headers: const {},
+          client: mockHttpClient,
+        );
+        expect(printed.where((m) => m.contains('only apply with baseUrl')),
+            isEmpty);
       });
 
       test('fullName is optional, deprecated and kept on the instance',

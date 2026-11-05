@@ -105,9 +105,14 @@ The SDK keeps the request paths and only swaps the host, so it calls `https://yo
 3. Never pass the request body through. Rebuild it from the fields and files that call needs, **set** `user_id` to the signed-in user (do not just compare it: the gateway's JSON decoder matches keys case-insensitively, so a duplicate `USER_ID` key can slip past a check), keep a `session_id` only if it was started for that user, and drop the query string (except `warmup=true` on session start).
 4. Send the rebuilt request to `https://api.biometrysolutions.com` with the same path, adding `Authorization: Bearer <your Biometry API token>`.
 
+In proxy mode your backend also does two jobs the device must not do:
+
+- **Consent.** Record the user's authorization and storage consent server-to-server with your API key (`/api-consent/consent` and `/api-consent/strg-consent`, with your `user_id` as `user_fullname`), for example in your onboarding flow before the first enrollment. `approveConsent()` / `getConsentApprovals()` are for your own custom consent templates and do **not** unlock enrollment.
+- **Liveness challenge.** Your backend issues the digits the user reads, keeps its own copy, and writes it into `phrase` on liveness, face-verify and voice-verify, ignoring the phrase the app sends.
+
 See [Backend proxy for client SDKs](https://developer.biometrysolutions.com/concepts/backend-proxy/) on the developer portal for a full example.
 
-`headers` are sent on every request and replace any SDK header with the same name (compared case-insensitively). If your app's session token can be refreshed while a `Biometry` instance is alive, pass `headersProvider` instead (or as well); it is called before every request and applied last:
+`headers` and `headersProvider` only apply in proxy mode: without `baseUrl` they are ignored and a warning is printed with `debugPrint`, so your app's own credentials are never sent to Biometry. `headers` are sent on every request and replace any SDK header with the same name (compared case-insensitively). If your app's session token can be refreshed while a `Biometry` instance is alive, pass `headersProvider` instead (or as well); it is called before every request and applied last:
 
 ```dart
 final biometry = await Biometry.initialize(
@@ -243,7 +248,7 @@ final deepfake = await biometry.deepfakeCheck(video: videoFile);
 
 ### Consent Handling
 
-Consent templates (their `journey_id`, header, and body text) are configured in the Biometry dashboard, not by this SDK. The SDK only records and looks up **approvals** of an existing template ID:
+Consent templates (their `journey_id`, header, and body text) are configured in the Biometry dashboard, not by this SDK. The SDK only records and looks up **approvals** of an existing template ID. These are your own custom consent documents: they do **not** record the authorization and storage consent that face/voice verification and enrollment require (record those from your backend, see [Proxy mode](#proxy-mode-recommended)):
 
 ```dart
 final response = await biometry.approveConsent(consentId: 'your-consent-template-id');
