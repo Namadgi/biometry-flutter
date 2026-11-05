@@ -53,7 +53,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
     with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _tokenController = TextEditingController();
-  final TextEditingController _fullNameController = TextEditingController();
+  final TextEditingController _baseUrlController = TextEditingController();
   final TextEditingController _userIdController = TextEditingController();
   final TextEditingController _consentIdController = TextEditingController();
 
@@ -77,7 +77,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
   @override
   void dispose() {
     _tokenController.dispose();
-    _fullNameController.dispose();
+    _baseUrlController.dispose();
     _userIdController.dispose();
     _consentIdController.dispose();
     _animationController.dispose();
@@ -86,13 +86,9 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _initializeBiometry() async {
     final token = _tokenController.text.trim();
-    if (token.isEmpty) {
-      _showSnackBar('Please enter a valid token.');
-      return;
-    }
-    final fullName = _fullNameController.text.trim();
-    if (fullName.isEmpty) {
-      _showSnackBar('Please enter your full name.');
+    final baseUrl = _baseUrlController.text.trim();
+    if (token.isEmpty && baseUrl.isEmpty) {
+      _showSnackBar('Enter a backend proxy URL, or a token for direct mode.');
       return;
     }
     final userId = _userIdController.text.trim();
@@ -101,10 +97,12 @@ class BiometryHomePageState extends State<BiometryHomePage>
       return;
     }
     try {
+      // Proxy mode: with a base URL the app holds no Biometry token; your
+      // backend adds it. Direct mode (token only) is for testing.
       _biometry = await Biometry.initialize(
-        token: token,
+        token: token.isEmpty ? null : token,
+        baseUrl: baseUrl.isEmpty ? null : baseUrl,
         userId: userId,
-        fullName: fullName,
       );
       setState(() {
         _isBiometryInitialized = true;
@@ -223,7 +221,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
         .map(
             (a) => '  • ${a.consentId} — approved on ${a.approvedAt.toLocal()}')
         .join('\n');
-    return 'Consent Approvals for ${_biometry!.fullName}\n\n$entries';
+    return 'Consent Approvals for ${_userIdController.text.trim()}\n\n$entries';
   }
 
   Future<void> _endSession() async {
@@ -509,9 +507,32 @@ class BiometryHomePageState extends State<BiometryHomePage>
                           ),
                           const SizedBox(height: 16),
                           TextFormField(
+                            controller: _baseUrlController,
+                            decoration: InputDecoration(
+                              labelText: 'Backend proxy URL (recommended)',
+                              hintText: 'https://your-backend.example.com',
+                              labelStyle:
+                                  TextStyle(color: AppTheme.textColorSecondary),
+                              prefixIcon: Icon(Icons.dns,
+                                  color: AppTheme.accentColor),
+                              filled: true,
+                              fillColor: const Color(0xFF1F2937),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 12),
+                            ),
+                            style: const TextStyle(color: Colors.white),
+                            keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.next,
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
                             controller: _tokenController,
                             decoration: InputDecoration(
-                              labelText: 'Token',
+                              labelText: 'Token (direct mode, testing only)',
                               labelStyle:
                                   TextStyle(color: AppTheme.textColorSecondary),
                               prefixIcon: Icon(Icons.vpn_key,
@@ -527,35 +548,9 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             ),
                             style: const TextStyle(color: Colors.white),
                             validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Please enter your token';
-                              }
-                              return null;
-                            },
-                            textInputAction: TextInputAction.next,
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _fullNameController,
-                            decoration: InputDecoration(
-                              labelText: 'Full Name',
-                              labelStyle:
-                                  TextStyle(color: AppTheme.textColorSecondary),
-                              prefixIcon: Icon(Icons.person,
-                                  color: AppTheme.accentColor),
-                              filled: true,
-                              fillColor: const Color(0xFF1F2937),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide.none,
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 12),
-                            ),
-                            style: const TextStyle(color: Colors.white),
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Please enter your full name';
+                              if ((value == null || value.trim().isEmpty) &&
+                                  _baseUrlController.text.trim().isEmpty) {
+                                return 'Enter a token or a backend proxy URL';
                               }
                               return null;
                             },

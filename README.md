@@ -17,7 +17,7 @@ This package is tailored specifically for developers building high-security appl
 
 ### Prerequisites
 
-- Obtain an API token from [Biometry](https://console.biometrysolutions.com).
+- Obtain an API token from [Biometry](https://console.biometrysolutions.com), and keep it on your backend (see [Proxy mode](#proxy-mode-recommended)).
 - Flutter SDK version `>=3.0.0 <4.0.0`
 - Android minimum SDK version: 21
 - iOS minimum platform version: 13.0
@@ -83,27 +83,58 @@ end
 
 ### Initializing Biometry
 
-`userId` is an opaque, customer-provided identity key (letters, digits, and `._:@-` only, max 128 characters) — it's what the Biometry API uses to identify the user, and is required. `fullName` is kept for your own display purposes only; it is never sent to the API.
+`userId` is an opaque, customer-provided identity key (letters, digits, and `._:@-` only, max 128 characters) — it's what the Biometry API uses to identify the user, and is required.
+
+#### Proxy mode (recommended)
+
+Your Biometry API token is project-wide and long-lived. Anything shipped inside an APK or IPA can be extracted, so keep the token on your backend and point the SDK at it with `baseUrl`:
+
+```dart
+final biometry = await Biometry.initialize(
+  baseUrl: 'https://your-backend.example.com/biometry',
+  userId: 'user-1234',
+  // Optional: your own app's credentials, checked by your backend.
+  headers: {'Authorization': 'Bearer $yourAppSessionToken'},
+);
+```
+
+The SDK keeps the request paths and only swaps the host, so it calls `https://your-backend.example.com/biometry/api-gateway/v2/sessions`, `.../api-gateway/v2/liveness`, and so on. Without a `token` it sends no `Authorization` header of its own. Your backend must:
+
+1. Authenticate your user (with your own session, cookie or the `headers` you pass here).
+2. Check that the `user_id` in the request (in the JSON `request` part of multipart calls, or in the path of consent calls) is a user that caller may act as, and that any `session_id` was started for that user.
+3. Forward only the `/api-gateway/v2/...` paths your app uses to `https://api.biometrysolutions.com` with the same path and query, adding `Authorization: Bearer <your Biometry API token>`, and stream the response back.
+
+See [Backend proxy for client SDKs](https://developer.biometrysolutions.com/concepts/backend-proxy/) on the developer portal for a full example.
+
+`headers` are sent on every request and replace any SDK header with the same name (compared case-insensitively).
+
+#### Direct mode (testing only)
+
+Without `baseUrl`, pass your API token and the SDK calls the Biometry API directly. Only do this for testing or internal apps, since anyone who unpacks the app can read the token:
 
 ```dart
 final biometry = await Biometry.initialize(
   token: 'your-api-token',
   userId: 'user-1234',
-  fullName: 'John Doe',
 );
 ```
+
+`initialize` throws an `ArgumentError` if you pass neither `token` nor `baseUrl`.
+
+#### Client app headers
 
 Optionally, pass `clientAppName` and `clientAppVersion` to identify your app on every request (sent as the `X-Client-App` and `X-Client-App-Version` headers):
 
 ```dart
 final biometry = await Biometry.initialize(
-  token: 'your-api-token',
+  baseUrl: 'https://your-backend.example.com/biometry',
   userId: 'user-1234',
-  fullName: 'John Doe',
   clientAppName: 'MyApp',
   clientAppVersion: '3.2.1',
 );
 ```
+
+`fullName` is deprecated since 2.1.0. It was never sent to the v2 API and will be removed in 3.0.0; you can drop it from your `initialize` call.
 
 ### Setting the Liveness Challenge
 
@@ -234,7 +265,7 @@ A complete, functional example application is provided within the [`example/`](e
 ## Security and Privacy
 
 Biometry adheres to strict security standards:
-- Authentication via secure API tokens.
+- Authentication via API tokens that can stay on your backend (proxy mode), so no Biometry token ships in the app.
 - Session-specific unique identifiers for enhanced traceability.
 - No persistent storage or logging of biometric data within the package.
 
