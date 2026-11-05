@@ -673,6 +673,7 @@ void main() {
 
     group('phrase utilities', () {
       test('phraseWords spells out each digit of the phrase', () {
+        // ignore: deprecated_member_use_from_same_package
         Biometry.resetPhrase();
         final words = biometry.phraseWords.split(' ');
         const validWords = {
@@ -688,6 +689,7 @@ void main() {
       });
 
       test('resetPhrase generates 7 unique digits', () {
+        // ignore: deprecated_member_use_from_same_package
         Biometry.resetPhrase();
         final digits = biometry.phraseAsIntList.split(', ');
 
@@ -695,6 +697,72 @@ void main() {
         expect(digits.toSet(), hasLength(7),
             reason: 'Phrase digits should all be unique');
       });
+    });
+
+    group('setChallenge', () {
+      // _phrase is static, so leave a device-generated phrase behind for
+      // whichever test runs next.
+      tearDown(() {
+        // ignore: deprecated_member_use_from_same_package
+        Biometry.resetPhrase();
+      });
+
+      test('uses the given challenge exactly, including a leading zero', () {
+        Biometry.setChallenge('0712845');
+
+        expect(biometry.phrase, '0712845');
+        expect(biometry.phraseAsIntList, '0, 7, 1, 2, 8, 4, 5');
+        expect(biometry.phraseWords, 'Zero Seven One Two Eight Four Five');
+      });
+
+      test('accepts more than 7 digits and repeated digits', () {
+        Biometry.setChallenge('1123581321');
+        expect(biometry.phrase, '1123581321');
+      });
+
+      test('sends the challenge as the phrase on liveness, face and voice verify',
+          () async {
+        final sentPhrases = <String, String>{};
+        when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+          final request =
+              invocation.positionalArguments[0] as http.MultipartRequest;
+          final requestJson =
+              jsonDecode(request.fields['request']!) as Map<String, dynamic>;
+          sentPhrases[request.url.path.split('/').last] =
+              requestJson['phrase'] as String;
+          return http.StreamedResponse(bodyStream('{"data":{}}'), 200);
+        });
+
+        Biometry.setChallenge('9305718');
+        await biometry.livenessCheck(video: mockFile);
+        await biometry.faceVerify(video: mockFile);
+        await biometry.voiceVerify(video: mockFile);
+
+        const expected = 'Nine Three Zero Five Seven One Eight';
+        expect(sentPhrases, {
+          'liveness': expected,
+          'face-verify': expected,
+          'voice-verify': expected,
+        });
+      });
+
+      for (final invalid in <String>[
+        '',
+        '123456', // too short
+        '12345a7',
+        '1234 567',
+        '1,2,3,4,5,6,7',
+        ' 1234567',
+        'One Two Three Four Five Six Seven',
+        '１２３４５６７', // full-width digits are not ASCII 0-9
+      ]) {
+        test('rejects "$invalid" without changing the current phrase', () {
+          Biometry.setChallenge('2468013');
+
+          expect(() => Biometry.setChallenge(invalid), throwsArgumentError);
+          expect(biometry.phrase, '2468013');
+        });
+      }
     });
   });
 }

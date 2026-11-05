@@ -1,3 +1,12 @@
+## [2.1.0] - Unreleased
+
+### Added
+- `Biometry.setChallenge(challenge)` — use the liveness challenge your backend issued as the phrase the user speaks (BM-526). The SDK displays it and sends it as `phrase` exactly as given. It must be the digits `0`-`9` only, at least 7 of them (`Biometry.minChallengeDigits`); anything else throws an `ArgumentError` instead of falling back to local digits.
+- `phrase` getter returning the current phrase digits unchanged (for example `"0712845"`).
+
+### Deprecated
+- Generating the phrase on the device: the digits `initialize()` picks when no challenge is set, and `Biometry.resetPhrase()`. A device-chosen phrase does not stop a pre-recorded video being replayed with a matching phrase. Have your backend generate the challenge, store it, and send its own copy to the liveness call. Existing apps keep working unchanged.
+
 ## [2.0.0] - 2026-07-21
 
 ### Added

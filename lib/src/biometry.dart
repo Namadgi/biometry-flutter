@@ -24,6 +24,11 @@ import 'package:path_provider/path_provider.dart';
 ///   - [approveConsent] - Records the user's approval of a consent template.
 ///   - [getConsentApprovals] - Retrieves the user's recorded consent approvals.
 ///   - [assertConsent] - Ensures the user has approved a given consent template.
+///   - [setChallenge] - Uses the liveness challenge your backend issued as the spoken phrase.
+///
+/// The phrase the user speaks should come from your backend via
+/// [setChallenge]. If you don't call it, [initialize] generates the digits on
+/// the device; that fallback is deprecated because it does not stop replays.
 class Biometry {
   static const String _host = 'https://api.biometrysolutions.com';
   static const String _apiGateway = '$_host/api-gateway';
@@ -116,8 +121,64 @@ class Biometry {
     // For example, if you have a camera controller, you might want to dispose of it here.
   }
 
-  /// Resets the internal phrase to a new random 7-digit sequence with unique digits (0-9).
-  /// Uses the same generation logic as during initialization.
+  /// The minimum number of digits accepted by [setChallenge].
+  ///
+  /// Matches the shortest phrase the v2 API accepts for liveness, face and
+  /// voice verification.
+  static const int minChallengeDigits = 7;
+
+  static final RegExp _challengePattern = RegExp(r'^[0-9]+$');
+
+  /// Sets the liveness challenge issued by **your backend** as the phrase the
+  /// user speaks.
+  ///
+  /// This is the recommended way to choose the phrase. Your backend generates
+  /// the digits (7 distinct digits from a cryptographically secure random
+  /// source), stores them against the user's login attempt, expires them
+  /// after 5 minutes, and uses them once. The app passes them here so the
+  /// user sees and speaks exactly those digits. [phraseWords],
+  /// [phraseAsIntList] and [phrase] then reflect [challenge] unchanged, and
+  /// [livenessCheck], [faceVerify] and [voiceVerify] send it as `phrase`.
+  ///
+  /// [challenge] must contain only the ASCII digits `0`-`9` (no spaces or
+  /// separators) and at least [minChallengeDigits] of them. Anything else
+  /// throws an [ArgumentError]; the SDK never silently replaces an invalid
+  /// challenge with locally generated digits.
+  ///
+  /// Why: a phrase chosen on the device does not stop replays, because
+  /// whoever controls the device can pair a pre-recorded video with the
+  /// phrase it happens to say. Only a phrase your backend chose, and checks
+  /// against its own stored copy, proves the video was recorded just now.
+  /// For that check to hold, the liveness or verify call must use your
+  /// backend's stored copy of the challenge, not a phrase that came back from
+  /// the device. See the dev portal's "Liveness challenge" guide.
+  static void setChallenge(String challenge) {
+    if (!_challengePattern.hasMatch(challenge)) {
+      throw ArgumentError.value(
+        challenge,
+        'challenge',
+        'must contain only the digits 0-9, with no spaces or separators',
+      );
+    }
+    if (challenge.length < minChallengeDigits) {
+      throw ArgumentError.value(
+        challenge,
+        'challenge',
+        'must have at least $minChallengeDigits digits '
+            '(got ${challenge.length})',
+      );
+    }
+    _phrase = challenge;
+  }
+
+  /// Resets the internal phrase to a new random 7-digit sequence with unique
+  /// digits (0-9), generated on the device. [initialize] uses the same logic.
+  ///
+  /// Deprecated: a phrase generated on the device does not protect against
+  /// replayed videos. Have your backend issue the challenge and pass it to
+  /// [setChallenge] instead.
+  @Deprecated('Generate the challenge on your backend and pass it to '
+      'Biometry.setChallenge(). Device-generated phrases do not stop replays.')
   static void resetPhrase() {
     final rand = Random.secure();
     final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
@@ -238,6 +299,12 @@ class Biometry {
       return "";
     }
   }
+
+  /// The phrase digits exactly as set, e.g. `"4871935"`.
+  ///
+  /// This is the challenge passed to [setChallenge] or, if none was set, the
+  /// digits [initialize] generated on the device (deprecated).
+  String get phrase => _phrase;
 
   /// Returns the phrase as a string of words.
   String get phraseWords {

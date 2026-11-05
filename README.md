@@ -105,11 +105,22 @@ final biometry = await Biometry.initialize(
 );
 ```
 
-### Displaying the Verification Phrase
+### Setting the Liveness Challenge
+
+The digits the user speaks should be a **challenge issued by your backend**: 7 distinct digits from a cryptographically secure random source, stored against the user's login attempt, valid for 5 minutes and used once. Pass it to the SDK before showing the scanner:
 
 ```dart
-print(biometry.phraseWords); // Example output: "One Two Three Four Five"
+// challenge comes from your backend, e.g. "4871935"
+Biometry.setChallenge(challenge);
+print(biometry.phrase);      // "4871935"
+print(biometry.phraseWords); // "Four Eight Seven One Nine Three Five"
 ```
+
+`setChallenge` accepts only the digits `0`-`9`, at least 7 of them, and throws an `ArgumentError` otherwise. The SDK displays and sends the challenge exactly as given.
+
+When your backend checks liveness, it must send **its own stored copy** of the challenge as `phrase`, never a phrase that came back from the device. A phrase chosen or returned by the device doesn't stop replays: someone who controls the device can pair a pre-recorded video with whatever digits that video happens to say.
+
+> **Deprecated:** if you don't call `setChallenge`, `Biometry.initialize()` still generates 7 digits on the device (and `Biometry.resetPhrase()` generates new ones). This keeps existing apps working but gives no replay protection. Move to a backend-issued challenge.
 
 ### Using the Scanner Widget
 
