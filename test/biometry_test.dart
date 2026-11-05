@@ -134,6 +134,7 @@ void main() {
         token: 'test-token',
         client: mockHttpClient,
         userId: 'john-doe',
+        // ignore: deprecated_member_use_from_same_package
         fullName: 'John Doe',
       );
     });
@@ -163,7 +164,6 @@ void main() {
           () => Biometry.initialize(
             token: 'bad-token',
             userId: 'john-doe',
-            fullName: 'John Doe',
             client: failingClient,
           ),
           throwsA(isA<Exception>()),
@@ -180,7 +180,6 @@ void main() {
           () => Biometry.initialize(
             token: 'test-token',
             userId: 'john-doe',
-            fullName: 'John Doe',
             client: malformedClient,
           ),
           throwsA(isA<Exception>()),
@@ -639,7 +638,6 @@ void main() {
         final clientAppBiometry = await Biometry.initialize(
           token: 'test-token',
           userId: 'john-doe',
-          fullName: 'John Doe',
           client: client,
           clientAppName: 'MyApp',
           clientAppVersion: '3.2.1',
@@ -669,6 +667,207 @@ void main() {
 
         expect(captured!.headers.containsKey('X-Client-App'), isFalse);
         expect(captured!.headers.containsKey('X-Client-App-Version'), isFalse);
+      });
+    });
+
+    group('direct mode (no baseUrl)', () {
+      test('sends the token to the default API host on every call', () async {
+        final requests = <http.BaseRequest>[];
+        final client = MockClient();
+        when(client.send(any)).thenAnswer((invocation) async {
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
+          requests.add(request);
+          final body = request.url.path.endsWith('/sessions')
+              ? '{"data":{"session_id":"s-1"}}'
+              : '{"data":{}}';
+          return http.StreamedResponse(bodyStream(body), 200);
+        });
+        when(client.get(any, headers: anyNamed('headers'))).thenAnswer(
+            (_) async => http.Response('{"data":[]}', 200));
+
+        final direct = await Biometry.initialize(
+          token: 'test-token',
+          userId: 'john-doe',
+          client: client,
+        );
+        await direct.livenessCheck(video: mockFile);
+        await direct.getConsentApprovals();
+
+        expect(requests.map((r) => r.url.toString()), [
+          '$v2Base/sessions?warmup=true',
+          '$v2Base/liveness',
+        ]);
+        for (final r in requests) {
+          expect(r.headers['Authorization'], 'Bearer test-token');
+        }
+        final getCall =
+            verify(client.get(captureAny, headers: captureAnyNamed('headers')))
+                .captured;
+        expect(getCall[0].toString(),
+            '$v2Base/consents/my-approvals/john-doe');
+        expect(getCall[1], {'Authorization': 'Bearer test-token'});
+      });
+
+      test('throws ArgumentError when there is no token and no baseUrl',
+          () async {
+        final client = MockClient();
+        await expectLater(
+          Biometry.initialize(userId: 'john-doe', client: client),
+          throwsA(isA<ArgumentError>()),
+        );
+        await expectLater(
+          Biometry.initialize(token: '', userId: 'john-doe', client: client),
+          throwsA(isA<ArgumentError>()),
+        );
+        verifyNever(client.send(any));
+      });
+
+      test('fullName is optional, deprecated and kept on the instance',
+          () async {
+        // ignore: deprecated_member_use_from_same_package
+        expect(biometry.fullName, 'John Doe');
+
+        final noName = await Biometry.initialize(
+          token: 'test-token',
+          userId: 'john-doe',
+          client: mockHttpClient,
+        );
+        // ignore: deprecated_member_use_from_same_package
+        expect(noName.fullName, '');
+      });
+    });
+
+    group('proxy mode (baseUrl)', () {
+      const proxy = 'https://app.example.com/biometry';
+      const proxyV2 = '$proxy/api-gateway/v2';
+
+      late MockClient client;
+      late List<http.BaseRequest> requests;
+
+      setUp(() {
+        client = MockClient();
+        requests = [];
+        when(client.send(any)).thenAnswer((invocation) async {
+          final request = invocation.positionalArguments[0] as http.BaseRequest;
+          requests.add(request);
+          final url = request.url.toString();
+          if (url == '$proxyV2/sessions?warmup=true') {
+            return http.StreamedResponse(
+                bodyStream('{"data":{"session_id":"s-proxy"}}'), 200);
+          }
+          if (url.startsWith(proxyV2)) {
+            return http.StreamedResponse(bodyStream('{"data":{}}'), 200);
+          }
+          fail('Request left the proxy: $url');
+        });
+        when(client.get(any, headers: anyNamed('headers'))).thenAnswer(
+            (_) async => http.Response('{"data":[]}', 200));
+      });
+
+      test('sends every request to baseUrl with no Authorization header',
+          () async {
+        final b = await Biometry.initialize(
+          baseUrl: proxy,
+          userId: 'john-doe',
+          client: client,
+        );
+        expect(b.sessionId, 's-proxy');
+
+        await b.livenessCheck(video: mockFile);
+        await b.faceVerify(video: mockFile);
+        await b.approveConsent(consentId: 'consent-abc');
+        await b.endSession();
+        await b.getConsentApprovals();
+
+        expect(requests.map((r) => r.url.toString()), [
+          '$proxyV2/sessions?warmup=true',
+          '$proxyV2/liveness',
+          '$proxyV2/face-verify',
+          '$proxyV2/consents/consent-abc/approve/john-doe',
+          '$proxyV2/sessions/s-proxy/end',
+        ]);
+        for (final r in requests) {
+          expect(r.headers.containsKey('Authorization'), isFalse,
+              reason: '${r.url} must not carry an Authorization header');
+        }
+        final getCall =
+            verify(client.get(captureAny, headers: captureAnyNamed('headers')))
+                .captured;
+        expect(getCall[0].toString(),
+            '$proxyV2/consents/my-approvals/john-doe');
+        expect((getCall[1] as Map).containsKey('Authorization'), isFalse);
+      });
+
+      test('sends custom headers on every request', () async {
+        final b = await Biometry.initialize(
+          baseUrl: '$proxy/',
+          userId: 'john-doe',
+          headers: {'X-App-Session': 'app-session-1'},
+          clientAppName: 'MyApp',
+          client: client,
+        );
+        await b.livenessCheck(video: mockFile);
+        await b.getConsentApprovals();
+
+        expect(requests.first.url.toString(), '$proxyV2/sessions?warmup=true',
+            reason: 'trailing slash on baseUrl is dropped');
+        for (final r in requests) {
+          expect(r.headers['X-App-Session'], 'app-session-1');
+          expect(r.headers['X-Client-App'], 'MyApp');
+          expect(r.headers.containsKey('Authorization'), isFalse);
+        }
+        final getHeaders = verify(
+                client.get(any, headers: captureAnyNamed('headers')))
+            .captured
+            .single as Map<String, String>;
+        expect(getHeaders['X-App-Session'], 'app-session-1');
+      });
+
+      test('a custom Authorization header replaces the token header',
+          () async {
+        final b = await Biometry.initialize(
+          token: 'project-token',
+          baseUrl: proxy,
+          userId: 'john-doe',
+          headers: {'authorization': 'Bearer app-user-jwt'},
+          client: client,
+        );
+        await b.getConsentApprovals();
+
+        final r = requests.single;
+        expect(r.headers['Authorization'], 'Bearer app-user-jwt');
+        final getHeaders = verify(
+                client.get(any, headers: captureAnyNamed('headers')))
+            .captured
+            .single as Map<String, String>;
+        expect(getHeaders, {'authorization': 'Bearer app-user-jwt'});
+      });
+
+      test('sends the token to baseUrl when both are set', () async {
+        await Biometry.initialize(
+          token: 'project-token',
+          baseUrl: proxy,
+          userId: 'john-doe',
+          client: client,
+        );
+        expect(requests.single.url.toString(), '$proxyV2/sessions?warmup=true');
+        expect(requests.single.headers['Authorization'], 'Bearer project-token');
+      });
+
+      test('rejects a baseUrl that is not an absolute http(s) URL', () async {
+        for (final bad in [
+          '',
+          'app.example.com',
+          'ftp://app.example.com',
+          'https://app.example.com?x=1',
+        ]) {
+          await expectLater(
+            Biometry.initialize(baseUrl: bad, userId: 'u', client: client),
+            throwsA(isA<ArgumentError>()),
+            reason: bad,
+          );
+        }
+        verifyNever(client.send(any));
       });
     });
 
