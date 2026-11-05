@@ -101,12 +101,22 @@ final biometry = await Biometry.initialize(
 The SDK keeps the request paths and only swaps the host, so it calls `https://your-backend.example.com/biometry/api-gateway/v2/sessions`, `.../api-gateway/v2/liveness`, and so on. Without a `token` it sends no `Authorization` header of its own. Your backend must:
 
 1. Authenticate your user (with your own session, cookie or the `headers` you pass here).
-2. Check that the `user_id` in the request (in the JSON `request` part of multipart calls, or in the path of consent calls) is a user that caller may act as, and that any `session_id` was started for that user.
-3. Forward only the `/api-gateway/v2/...` paths your app uses to `https://api.biometrysolutions.com` with the same path and query, adding `Authorization: Bearer <your Biometry API token>`, and stream the response back.
+2. Accept only the `/api-gateway/v2/...` paths your app uses.
+3. Never pass the request body through. Rebuild it from the fields and files that call needs, **set** `user_id` to the signed-in user (do not just compare it: the gateway's JSON decoder matches keys case-insensitively, so a duplicate `USER_ID` key can slip past a check), keep a `session_id` only if it was started for that user, and drop the query string (except `warmup=true` on session start).
+4. Send the rebuilt request to `https://api.biometrysolutions.com` with the same path, adding `Authorization: Bearer <your Biometry API token>`.
 
 See [Backend proxy for client SDKs](https://developer.biometrysolutions.com/concepts/backend-proxy/) on the developer portal for a full example.
 
-`headers` are sent on every request and replace any SDK header with the same name (compared case-insensitively).
+`headers` are sent on every request and replace any SDK header with the same name (compared case-insensitively). If your app's session token can be refreshed while a `Biometry` instance is alive, pass `headersProvider` instead (or as well); it is called before every request and applied last:
+
+```dart
+final biometry = await Biometry.initialize(
+  baseUrl: 'https://your-backend.example.com/biometry',
+  userId: 'user-1234',
+  headersProvider: () async =>
+      {'Authorization': 'Bearer ${await auth.currentToken()}'},
+);
+```
 
 #### Direct mode (testing only)
 
@@ -119,7 +129,7 @@ final biometry = await Biometry.initialize(
 );
 ```
 
-`initialize` throws an `ArgumentError` if you pass neither `token` nor `baseUrl`.
+`initialize` throws an `ArgumentError` (an `Error`, not an `Exception`) if you pass neither `token` nor `baseUrl`, or an empty token without `baseUrl`.
 
 #### Client app headers
 
