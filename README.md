@@ -107,22 +107,31 @@ final biometry = await Biometry.initialize(
 
 ### Setting the Liveness Challenge
 
-The digits the user speaks should be a **challenge issued by your backend**: 7 distinct digits from a cryptographically secure random source, stored against the user's login attempt, valid for 5 minutes and used once. Pass it to the SDK before showing the scanner:
+The digits the user speaks should be a **challenge issued by your backend**. We recommend 8 distinct digits from `1`-`9`, from a cryptographically secure random source, stored against the user's login attempt, valid for 5 minutes and used once. Pass it to the SDK before showing the scanner, and allow about 10 seconds of recording for 8 digits:
 
 ```dart
-// challenge comes from your backend, e.g. "4871935"
+// challenge comes from your backend, e.g. "48719352"
 Biometry.setChallenge(challenge);
-print(biometry.phrase);      // "4871935"
-print(biometry.phraseWords); // "Four Eight Seven One Nine Three Five"
+print(biometry.phrase);      // "48719352"
+print(biometry.phraseWords); // "Four Eight Seven One Nine Three Five Two"
+
+// No instance needed, e.g. to show the digits before initialize() finishes:
+print(Biometry.challengeWords('48719352'));
 ```
 
-`setChallenge` accepts only the digits `0`-`9`, at least 7 of them, and throws an `ArgumentError` otherwise. The SDK displays and sends the challenge exactly as given.
+`setChallenge` accepts only the digits `0`-`9`, 7 to 12 of them, and throws an `ArgumentError` otherwise. The SDK displays and sends the challenge exactly as given. It stays set, including across `Biometry.initialize()`, until you call `setChallenge` again (once per login attempt) or `resetPhrase()`.
+
+Why 8 digits from 1-9: the voice engine's quality check needs at least 7 recognised words, so one misheard digit in a 7-digit phrase already fails; 8 leaves a margin, and the Biometry console uses 8 too. `0` is left out because people say it as "zero" or "oh", which hurts voice matching.
 
 When your backend checks liveness, it must send **its own stored copy** of the challenge as `phrase`, never a phrase that came back from the device. A phrase chosen or returned by the device doesn't stop replays: someone who controls the device can pair a pre-recorded video with whatever digits that video happens to say.
 
-> **Deprecated:** if you don't call `setChallenge`, `Biometry.initialize()` still generates 7 digits on the device (and `Biometry.resetPhrase()` generates new ones). This keeps existing apps working but gives no replay protection. Move to a backend-issued challenge.
+> **Replay protection needs your backend in the path.** When the app calls Biometry directly with a token (direct mode), the phrase comes from the device, so there is no replay protection. Use proxy mode, where the SDK calls your backend and your backend injects its stored copy of the challenge into `phrase` before forwarding to Biometry. See [Backend proxy](https://developer.biometrysolutions.com/concepts/backend-proxy/).
+
+> **Deprecated:** if you don't call `setChallenge`, `Biometry.initialize()` still generates 7 digits from `1`-`9` on the device (and `Biometry.resetPhrase()` generates new ones). This keeps existing apps working but gives no replay protection. Move to a backend-issued challenge.
 
 ### Using the Scanner Widget
+
+`phrase` takes the words to show, one at a time: `biometry.phraseWords`, or `Biometry.challengeWords(challenge)` without an instance.
 
 ```dart
 BiometryScannerWidget(

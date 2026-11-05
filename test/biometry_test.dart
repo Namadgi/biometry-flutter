@@ -688,7 +688,7 @@ void main() {
         }
       });
 
-      test('resetPhrase generates 7 unique digits', () {
+      test('resetPhrase generates 7 unique digits from 1-9', () {
         // ignore: deprecated_member_use_from_same_package
         Biometry.resetPhrase();
         final digits = biometry.phraseAsIntList.split(', ');
@@ -696,6 +696,7 @@ void main() {
         expect(digits, hasLength(7));
         expect(digits.toSet(), hasLength(7),
             reason: 'Phrase digits should all be unique');
+        expect(digits, isNot(contains('0')));
       });
     });
 
@@ -718,6 +719,51 @@ void main() {
       test('accepts more than 7 digits and repeated digits', () {
         Biometry.setChallenge('1123581321');
         expect(biometry.phrase, '1123581321');
+      });
+
+      test('accepts up to 12 digits', () {
+        Biometry.setChallenge('123456789123');
+        expect(biometry.phrase, '123456789123');
+      });
+
+      test('a challenge set before initialize() survives it', () async {
+        Biometry.setChallenge('48719352');
+
+        final fresh = await Biometry.initialize(
+          token: 'test-token',
+          client: mockHttpClient,
+          userId: 'john-doe',
+          fullName: 'John Doe',
+        );
+
+        expect(fresh.phrase, '48719352');
+        expect(biometry.phrase, '48719352');
+      });
+
+      test('resetPhrase forgets the challenge, so initialize() generates again',
+          () async {
+        Biometry.setChallenge('48719352');
+        // ignore: deprecated_member_use_from_same_package
+        Biometry.resetPhrase();
+
+        final fresh = await Biometry.initialize(
+          token: 'test-token',
+          client: mockHttpClient,
+          userId: 'john-doe',
+          fullName: 'John Doe',
+        );
+
+        expect(fresh.phrase, isNot('48719352'));
+        expect(fresh.phrase, matches(RegExp(r'^[1-9]{7}$')));
+      });
+
+      test('challengeWords spells out a challenge without an instance', () {
+        expect(Biometry.challengeWords('48719352'),
+            'Four Eight Seven One Nine Three Five Two');
+        expect(Biometry.challengeWords('0712845'),
+            'Zero Seven One Two Eight Four Five');
+        expect(() => Biometry.challengeWords('123'), throwsArgumentError);
+        expect(() => Biometry.challengeWords('1234 5678'), throwsArgumentError);
       });
 
       test('sends the challenge as the phrase on liveness, face and voice verify',
@@ -749,6 +795,7 @@ void main() {
       for (final invalid in <String>[
         '',
         '123456', // too short
+        '1234567891234', // 13 digits: too long
         '12345a7',
         '1234 567',
         '1,2,3,4,5,6,7',
