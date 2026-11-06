@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:biometry/src/biometry.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -673,6 +674,7 @@ void main() {
 
     group('phrase utilities', () {
       test('phraseWords spells out each digit of the phrase', () {
+        // ignore: deprecated_member_use_from_same_package
         Biometry.resetPhrase();
         final words = biometry.phraseWords.split(' ');
         const validWords = {
@@ -687,13 +689,252 @@ void main() {
         }
       });
 
-      test('resetPhrase generates 7 unique digits', () {
+      test('resetPhrase generates 7 unique digits from 1-9', () {
+        // ignore: deprecated_member_use_from_same_package
         Biometry.resetPhrase();
         final digits = biometry.phraseAsIntList.split(', ');
 
         expect(digits, hasLength(7));
         expect(digits.toSet(), hasLength(7),
             reason: 'Phrase digits should all be unique');
+        expect(digits, isNot(contains('0')));
+      });
+    });
+
+    group('setChallenge', () {
+      // _phrase is static, so leave a device-generated phrase behind for
+      // whichever test runs next.
+      tearDown(() {
+        // ignore: deprecated_member_use_from_same_package
+        Biometry.resetPhrase();
+      });
+
+      test('uses the given challenge exactly, including a leading zero', () {
+        Biometry.setChallenge('0712845');
+
+        expect(biometry.phrase, '0712845');
+        expect(biometry.phraseAsIntList, '0, 7, 1, 2, 8, 4, 5');
+        expect(biometry.phraseWords, 'Zero Seven One Two Eight Four Five');
+      });
+
+      test('accepts more than 7 digits and repeated digits', () {
+        Biometry.setChallenge('1123581321');
+        expect(biometry.phrase, '1123581321');
+      });
+
+      test('accepts up to 12 digits', () {
+        Biometry.setChallenge('123456789123');
+        expect(biometry.phrase, '123456789123');
+      });
+
+      test('a challenge set before initialize() survives it', () async {
+        Biometry.setChallenge('48719352');
+
+        final fresh = await Biometry.initialize(
+          token: 'test-token',
+          client: mockHttpClient,
+          userId: 'john-doe',
+          fullName: 'John Doe',
+        );
+
+        expect(fresh.phrase, '48719352');
+        expect(biometry.phrase, '48719352');
+      });
+
+      test('resetPhrase forgets the challenge, so initialize() generates again',
+          () async {
+        Biometry.setChallenge('48719352');
+        // ignore: deprecated_member_use_from_same_package
+        Biometry.resetPhrase();
+
+        final fresh = await Biometry.initialize(
+          token: 'test-token',
+          client: mockHttpClient,
+          userId: 'john-doe',
+          fullName: 'John Doe',
+        );
+
+        expect(fresh.phrase, isNot('48719352'));
+        expect(fresh.phrase, matches(RegExp(r'^[1-9]{7}$')));
+      });
+
+      test('clearChallenge forgets the challenge, so initialize() generates again',
+          () async {
+        Biometry.setChallenge('48719352');
+        Biometry.clearChallenge();
+        expect(biometry.phrase, isEmpty);
+
+        final fresh = await Biometry.initialize(
+          token: 'test-token',
+          client: mockHttpClient,
+          userId: 'john-doe',
+          fullName: 'John Doe',
+        );
+
+        expect(fresh.phrase, matches(RegExp(r'^[1-9]{7}$')));
+      });
+
+      test('the challenge stays set across liveness then voice verify', () async {
+        when(mockHttpClient.send(any)).thenAnswer(
+            (_) async => http.StreamedResponse(bodyStream('{"data":{}}'), 200));
+
+        Biometry.setChallenge('48719352');
+        await biometry.livenessCheck(video: mockFile);
+        await biometry.voiceVerify(video: mockFile);
+
+        expect(biometry.phrase, '48719352');
+      });
+
+      test('challengeWords spells out a challenge without an instance', () {
+        expect(Biometry.challengeWords('48719352'),
+            'Four Eight Seven One Nine Three Five Two');
+        expect(Biometry.challengeWords('0712845'),
+            'Zero Seven One Two Eight Four Five');
+        expect(() => Biometry.challengeWords('123'), throwsArgumentError);
+        expect(() => Biometry.challengeWords('1234 5678'), throwsArgumentError);
+      });
+
+      test('sends the challenge as the phrase on liveness, face and voice verify',
+          () async {
+        final sentPhrases = <String, String>{};
+        when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+          final request =
+              invocation.positionalArguments[0] as http.MultipartRequest;
+          final requestJson =
+              jsonDecode(request.fields['request']!) as Map<String, dynamic>;
+          sentPhrases[request.url.path.split('/').last] =
+              requestJson['phrase'] as String;
+          return http.StreamedResponse(bodyStream('{"data":{}}'), 200);
+        });
+
+        Biometry.setChallenge('9305718');
+        await biometry.livenessCheck(video: mockFile);
+        await biometry.faceVerify(video: mockFile);
+        await biometry.voiceVerify(video: mockFile);
+
+        const expected = 'Nine Three Zero Five Seven One Eight';
+        expect(sentPhrases, {
+          'liveness': expected,
+          'face-verify': expected,
+          'voice-verify': expected,
+        });
+      });
+
+      group('after clearChallenge', () {
+        setUp(Biometry.clearChallenge);
+
+        test('phraseWords throws instead of returning an empty phrase', () {
+          expect(() => biometry.phraseWords, throwsStateError);
+        });
+
+        test('livenessCheck throws without sending a request', () async {
+          clearInteractions(mockHttpClient);
+          await expectLater(
+              biometry.livenessCheck(video: mockFile), throwsStateError);
+          verifyNever(mockHttpClient.send(any));
+        });
+
+        test('enrolVoice throws without sending a request', () async {
+          clearInteractions(mockHttpClient);
+          await expectLater(
+              biometry.enrolVoice(videoFile: mockFile), throwsStateError);
+          verifyNever(mockHttpClient.send(any));
+        });
+
+        test('voiceVerify throws without sending a request', () async {
+          clearInteractions(mockHttpClient);
+          await expectLater(
+              biometry.voiceVerify(video: mockFile), throwsStateError);
+          verifyNever(mockHttpClient.send(any));
+        });
+
+        test('faceVerify needs no challenge and sends an empty phrase',
+            () async {
+          String? sentPhrase;
+          when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+            final request =
+                invocation.positionalArguments[0] as http.MultipartRequest;
+            final requestJson =
+                jsonDecode(request.fields['request']!) as Map<String, dynamic>;
+            sentPhrase = requestJson['phrase'] as String;
+            return http.StreamedResponse(bodyStream('{"data":{}}'), 200);
+          });
+
+          final response = await biometry.faceVerify(video: mockFile);
+
+          expect(response.statusCode, 200);
+          expect(sentPhrase, '');
+        });
+      });
+
+      for (final invalid in <String>[
+        '',
+        '123456', // too short
+        '1234567891234', // 13 digits: too long
+        '12345a7',
+        '1234 567',
+        '1,2,3,4,5,6,7',
+        ' 1234567',
+        'One Two Three Four Five Six Seven',
+        '１２３４５６７', // full-width digits are not ASCII 0-9
+      ]) {
+        test('rejects "$invalid" without changing the current phrase', () {
+          Biometry.setChallenge('2468013');
+
+          expect(() => Biometry.setChallenge(invalid), throwsArgumentError);
+          expect(biometry.phrase, '2468013');
+        });
+      }
+    });
+
+    group('device-generated challenge warning', () {
+      late DebugPrintCallback originalDebugPrint;
+      late List<String> printed;
+
+      setUp(() {
+        printed = <String>[];
+        originalDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) printed.add(message);
+        };
+        Biometry.debugResetDeviceChallengeWarning();
+      });
+
+      tearDown(() {
+        debugPrint = originalDebugPrint;
+        // ignore: deprecated_member_use_from_same_package
+        Biometry.resetPhrase();
+      });
+
+      List<String> warnings() => printed
+          .where((m) => m.contains('no replay protection'))
+          .toList();
+
+      Future<Biometry> init() => Biometry.initialize(
+            token: 'test-token',
+            client: mockHttpClient,
+            userId: 'john-doe',
+            fullName: 'John Doe',
+          );
+
+      test('warns once per process when initialize() generates the phrase',
+          () async {
+        Biometry.clearChallenge();
+        await init();
+        Biometry.clearChallenge();
+        await init();
+
+        expect(warnings(), hasLength(1));
+        expect(warnings().single,
+            contains('/concepts/liveness-challenge/'));
+        expect(warnings().single, contains('Biometry.setChallenge()'));
+      });
+
+      test('does not warn when a challenge was set', () async {
+        Biometry.setChallenge('48719352');
+        await init();
+
+        expect(warnings(), isEmpty);
       });
     });
   });

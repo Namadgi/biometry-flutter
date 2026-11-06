@@ -24,13 +24,16 @@ import 'package:path_provider/path_provider.dart';
 ///   - [approveConsent] - Records the user's approval of a consent template.
 ///   - [getConsentApprovals] - Retrieves the user's recorded consent approvals.
 ///   - [assertConsent] - Ensures the user has approved a given consent template.
+///   - [setChallenge] - Uses the liveness challenge your backend issued as the spoken phrase.
+///
+/// The phrase the user speaks should come from your backend via
+/// [setChallenge]. If you don't call it, [initialize] generates the digits on
+/// the device; that fallback is deprecated because it does not stop replays.
 class Biometry {
   static const String _host = 'https://api.biometrysolutions.com';
   static const String _apiGateway = '$_host/api-gateway';
   static const String _apiGatewayV2 = '$_apiGateway/v2';
   static String _phrase = '';
-
-  // Generate a 7-digit number with unique digits from 0-9.
 
   final String _token;
   final http.Client _client;
@@ -90,11 +93,12 @@ class Biometry {
       clientAppName: clientAppName,
       clientAppVersion: clientAppVersion,
     );
-    final rand = Random.secure();
-
-    final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
-    final digits = allDigits.take(7).toList();
-    Biometry._phrase = digits.join();
+    // Keep a challenge set with setChallenge() before initialize(); otherwise
+    // fall back to the deprecated device-generated phrase.
+    if (!_challengeSet) {
+      _phrase = _generateDevicePhrase();
+      _warnDeviceGeneratedChallenge();
+    }
 
     if (kDebugMode) {
       debugPrint("Phrase: $_phrase");
@@ -116,13 +120,170 @@ class Biometry {
     // For example, if you have a camera controller, you might want to dispose of it here.
   }
 
-  /// Resets the internal phrase to a new random 7-digit sequence with unique digits (0-9).
-  /// Uses the same generation logic as during initialization.
+  /// The minimum number of digits accepted by [setChallenge].
+  ///
+  /// The voice engine's quality check needs at least 7 recognised words, so a
+  /// shorter phrase can't be used for voice enrollment, and voice
+  /// auto-enrollment skips it. We recommend issuing 8.
+  static const int minChallengeDigits = 7;
+
+  /// The maximum number of digits accepted by [setChallenge]. Longer phrases
+  /// don't fit a sensible recording window.
+  static const int maxChallengeDigits = 12;
+
+  static final RegExp _challengePattern = RegExp(r'^[0-9]+$');
+
+  /// Whether the current phrase came from [setChallenge], so [initialize]
+  /// must not replace it.
+  static bool _challengeSet = false;
+
+  static const List<String> _digitWords = [
+    'Zero', 'One', 'Two', 'Three', 'Four', //
+    'Five', 'Six', 'Seven', 'Eight', 'Nine',
+  ];
+
+  static void _validateChallenge(String challenge) {
+    if (!_challengePattern.hasMatch(challenge)) {
+      throw ArgumentError.value(
+        challenge,
+        'challenge',
+        'must contain only the digits 0-9, with no spaces or separators',
+      );
+    }
+    if (challenge.length < minChallengeDigits ||
+        challenge.length > maxChallengeDigits) {
+      throw ArgumentError.value(
+        challenge,
+        'challenge',
+        'must have $minChallengeDigits to $maxChallengeDigits digits '
+            '(got ${challenge.length})',
+      );
+    }
+  }
+
+  /// Spells out a challenge from your backend as the words the user reads,
+  /// e.g. `"48719352"` becomes `"Four Eight Seven One Nine Three Five Two"`.
+  ///
+  /// Needs no [Biometry] instance, so you can show the challenge before
+  /// [initialize] has finished. Validates [challenge] like [setChallenge] and
+  /// throws an [ArgumentError] for anything it would reject.
+  static String challengeWords(String challenge) {
+    _validateChallenge(challenge);
+    return _toWords(challenge);
+  }
+
+  static String _toWords(String digits) => digits
+      .split('')
+      .map((d) => _digitWords[d.codeUnitAt(0) - 0x30])
+      .join(' ');
+
+  /// 7 distinct digits from 1-9, shuffled with a secure random source. The
+  /// deprecated fallback when no challenge was set. 0 is left out because
+  /// people say it in several ways ("zero", "oh"), which hurts voice matching.
+  static String _generateDevicePhrase() {
+    final digits = [1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(Random.secure());
+    return digits.take(7).join();
+  }
+
+  /// Link to the dev portal guide on backend-issued challenges.
+  static const String _challengeDocsUrl =
+      'https://developer.biometrysolutions.com/concepts/liveness-challenge/';
+
+  /// Whether the device-generated challenge warning was already printed in
+  /// this process.
+  static bool _deviceChallengeWarned = false;
+
+  /// Prints a one-time deprecation warning (once per process) when the SDK
+  /// falls back to a phrase generated on the device.
+  static void _warnDeviceGeneratedChallenge() {
+    if (_deviceChallengeWarned) return;
+    _deviceChallengeWarned = true;
+    debugPrint('Biometry: no liveness challenge was set, so the phrase was '
+        'generated on the device. This is deprecated: device-generated '
+        'challenges give no replay protection. Pass a challenge issued by '
+        'your backend with Biometry.setChallenge(). See $_challengeDocsUrl');
+  }
+
+  /// Lets tests see the one-time device-challenge warning again.
+  @visibleForTesting
+  static void debugResetDeviceChallengeWarning() {
+    _deviceChallengeWarned = false;
+  }
+
+  /// The phrase as words, for calls that need the user to have spoken a
+  /// challenge. Throws a [StateError] when there is none (for example after
+  /// [clearChallenge]), instead of sending an empty phrase.
+  static String _requirePhraseWords() {
+    if (_phrase.isEmpty) {
+      throw StateError('No liveness challenge set: call '
+          'Biometry.setChallenge() or Biometry.initialize() first.');
+    }
+    return _toWords(_phrase);
+  }
+
+  /// Sets the liveness challenge issued by **your backend** as the phrase the
+  /// user speaks.
+  ///
+  /// This is the recommended way to choose the phrase. Your backend generates
+  /// the digits (we recommend 8 distinct digits from 1-9, from a
+  /// cryptographically secure random source), stores them against the user's
+  /// login attempt, expires them within 5 minutes, and uses them once. The app
+  /// passes them here so the user sees and speaks exactly those digits.
+  /// [phraseWords], [phraseAsIntList] and [phrase] then reflect [challenge]
+  /// unchanged, and [livenessCheck], [faceVerify] and [voiceVerify] send it as
+  /// `phrase`.
+  ///
+  /// The challenge stays set, including across [initialize] and across calls
+  /// (one recording can go to [livenessCheck] and then [voiceVerify]), until
+  /// you call [setChallenge] again or [clearChallenge]. Call [setChallenge]
+  /// for every login attempt, and [clearChallenge] when abandoning one.
+  ///
+  /// [challenge] must contain only the ASCII digits `0`-`9` (no spaces or
+  /// separators), between [minChallengeDigits] and [maxChallengeDigits] of
+  /// them. Anything else throws an [ArgumentError] and leaves the current
+  /// phrase unchanged; the SDK never silently replaces an invalid challenge
+  /// with locally generated digits.
+  ///
+  /// Why: a phrase chosen on the device does not stop replays, because
+  /// whoever controls the device can pair a pre-recorded video with the
+  /// phrase it happens to say. Only a phrase your backend chose, and checks
+  /// against its own stored copy, proves the video was recorded just now.
+  /// For that check to hold, the liveness or verify call must use your
+  /// backend's stored copy of the challenge, not a phrase that came back from
+  /// the device. See the dev portal's "Liveness challenge" guide.
+  static void setChallenge(String challenge) {
+    _validateChallenge(challenge);
+    _phrase = challenge;
+    _challengeSet = true;
+  }
+
+  /// Forgets the challenge set with [setChallenge], e.g. when the user
+  /// abandons a login attempt, so a stale challenge is never shown again.
+  ///
+  /// The current phrase is cleared, and the next [initialize] falls back to
+  /// generating digits on the device (deprecated) unless you call
+  /// [setChallenge] first. Until then, [phraseWords], [livenessCheck],
+  /// [voiceVerify] and [enrolVoice] throw a [StateError] instead of using an
+  /// empty phrase; [faceVerify] needs no challenge and still works.
+  static void clearChallenge() {
+    _phrase = '';
+    _challengeSet = false;
+  }
+
+  /// Resets the internal phrase to a new random 7-digit sequence with unique
+  /// digits (1-9), generated on the device, and forgets any challenge set
+  /// with [setChallenge]. [initialize] uses the same logic when no challenge
+  /// is set.
+  ///
+  /// Deprecated: a phrase generated on the device does not protect against
+  /// replayed videos. Have your backend issue the challenge and pass it to
+  /// [setChallenge] instead.
+  @Deprecated('Generate the challenge on your backend and pass it to '
+      'Biometry.setChallenge(). Device-generated phrases do not stop replays.')
   static void resetPhrase() {
-    final rand = Random.secure();
-    final allDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]..shuffle(rand);
-    final digits = allDigits.take(7).toList();
-    _phrase = digits.join();
+    _phrase = _generateDevicePhrase();
+    _challengeSet = false;
+    _warnDeviceGeneratedChallenge();
     if (kDebugMode) {
       debugPrint("Phrase: $_phrase");
     }
@@ -239,35 +400,18 @@ class Biometry {
     }
   }
 
-  /// Returns the phrase as a string of words.
-  String get phraseWords {
-    return _phrase.split('').map((e) {
-      switch (e) {
-        case '0':
-          return 'Zero';
-        case '1':
-          return 'One';
-        case '2':
-          return 'Two';
-        case '3':
-          return 'Three';
-        case '4':
-          return 'Four';
-        case '5':
-          return 'Five';
-        case '6':
-          return 'Six';
-        case '7':
-          return 'Seven';
-        case '8':
-          return 'Eight';
-        case '9':
-          return 'Nine';
-        default:
-          return e; // Leave the character as-is
-      }
-    }).join(' ');
-  }
+  /// The phrase digits exactly as set, e.g. `"48719352"`.
+  ///
+  /// This is the challenge passed to [setChallenge] or, if none was set, the
+  /// digits [initialize] generated on the device (deprecated).
+  String get phrase => _phrase;
+
+  /// Returns the phrase as a string of words. See also [challengeWords],
+  /// which needs no instance.
+  ///
+  /// Throws a [StateError] when no phrase is set (after [clearChallenge]),
+  /// so a scanner is never started with an empty phrase.
+  String get phraseWords => _requirePhraseWords();
 
   /// Returns the phrase as a string of integers.
   String get phraseAsIntList {
@@ -545,7 +689,9 @@ class Biometry {
 
     final requestJson = jsonEncode({
       'user_id': _userId,
-      'phrase': phraseWords,
+      // Face verify needs no challenge, so an empty phrase is sent as is
+      // rather than throwing like livenessCheck and voiceVerify.
+      'phrase': _toWords(_phrase),
       'session_id': sessionId,
       if (vocabulary != null) 'vocabulary': vocabulary,
     });
