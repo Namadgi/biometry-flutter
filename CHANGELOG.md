@@ -5,12 +5,21 @@
 - `Biometry.clearChallenge()` — forgets the challenge when a login attempt is abandoned; the next `initialize()` falls back to the deprecated device-generated digits unless `setChallenge` is called first. Until then `phraseWords`, `livenessCheck()`, `voiceVerify()` and `enrolVoice()` throw a `StateError` instead of sending an empty phrase or starting a near-empty recording; `faceVerify()` needs no challenge and still works.
 - `Biometry.challengeWords(challenge)` — spells a challenge out as the words to show (for example in `BiometryScannerWidget(phrase: ...)`) without a `Biometry` instance.
 - `phrase` getter returning the current phrase digits unchanged (for example `"48719352"`).
+- **Proxy mode** (BM-527): `baseUrl` on `Biometry.initialize()` sends every request to your own backend instead of the Biometry API, so the app does not need to hold your project API token. The request paths are kept (`<baseUrl>/api-gateway/v2/...`), so the backend can forward them unchanged and add `Authorization` server-side. Your backend records consent with `PUT /api-gateway/v2/users/{user_id}/consents` (user ids of 3 to 128 characters of `A-Za-z0-9._:@-`). The web SDK's example proxy (`biometry-web-sdk/examples/proxy-server`) needs biometry-api-gateway #147 (phrase optional on v2 face-verify) and then #148 (the consents endpoint) deployed.
+- `headers` on `Biometry.initialize()`: extra headers sent on every request, for example your app's own session token for the proxy. They replace SDK headers with the same name (compared case-insensitively), including `Authorization`.
+- `headersProvider` on `Biometry.initialize()` (a `BiometryHeadersProvider`, `FutureOr<Map<String, String>> Function()`): called before every request and applied after `headers`, so an app session token that is refreshed while the `Biometry` instance is alive is picked up.
+- `headers` and `headersProvider` only apply with `baseUrl` (proxy mode). Without `baseUrl` they are ignored and a warning is printed with `debugPrint`, so direct calls to Biometry carry only the token.
+- `Biometry.defaultBaseUrl` constant (`https://api.biometrysolutions.com`).
 
 ### Changed
 - The device-generated fallback phrase now draws its 7 digits from 1-9 instead of 0-9. `0` is said in several ways ("zero", "oh"), which hurts voice matching (BM-450).
+- `token` is optional when `baseUrl` is set. Without a token the SDK sends no `Authorization` header. Without `baseUrl`, behaviour is unchanged: requests go to the Biometry API with `Authorization: Bearer <token>`.
+- **Behaviour change:** calling `initialize()` with an empty or missing `token` and no `baseUrl` now throws an `ArgumentError` before any network call. `ArgumentError` is an `Error`, not an `Exception`, so `on Exception catch` and `catch (e) where e is Exception` no longer catch it. In 2.0.0 the same call sent `Authorization: Bearer ` and failed with an `Exception` from the session start (HTTP 401). Calls with a non-empty token are unaffected.
+- `initialize()` also throws an `ArgumentError` when `baseUrl` is not an absolute `http`/`https` URL without a query or fragment.
 
 ### Deprecated
 - Generating the phrase on the device: the digits `initialize()` picks when no challenge is set, and `Biometry.resetPhrase()`. A device-chosen phrase does not stop a pre-recorded video being replayed with a matching phrase. Have your backend generate the challenge, store it, and send its own copy to the liveness call. Existing apps keep working, but the first fallback in a process now prints a one-time deprecation warning (via `debugPrint`) pointing to https://developer.biometrysolutions.com/concepts/liveness-challenge/.
+- `fullName` on `initialize()` and the `Biometry.fullName` field. The v2 API identifies users by `userId` and has never received it. It is now optional, `Biometry.fullName` returns an empty string when it was not passed, and both will be removed in 3.0.0.
 
 ## [2.0.0] - 2026-07-21
 
