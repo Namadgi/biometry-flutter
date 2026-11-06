@@ -834,6 +834,13 @@ void main() {
           verifyNever(mockHttpClient.send(any));
         });
 
+        test('enrolVoice throws without sending a request', () async {
+          clearInteractions(mockHttpClient);
+          await expectLater(
+              biometry.enrolVoice(videoFile: mockFile), throwsStateError);
+          verifyNever(mockHttpClient.send(any));
+        });
+
         test('voiceVerify throws without sending a request', () async {
           clearInteractions(mockHttpClient);
           await expectLater(

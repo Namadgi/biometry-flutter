@@ -262,9 +262,9 @@ class Biometry {
   ///
   /// The current phrase is cleared, and the next [initialize] falls back to
   /// generating digits on the device (deprecated) unless you call
-  /// [setChallenge] first. Until then, [phraseWords], [livenessCheck] and
-  /// [voiceVerify] throw a [StateError] instead of using an empty phrase;
-  /// [faceVerify] needs no challenge and still works.
+  /// [setChallenge] first. Until then, [phraseWords], [livenessCheck],
+  /// [voiceVerify] and [enrolVoice] throw a [StateError] instead of using an
+  /// empty phrase; [faceVerify] needs no challenge and still works.
   static void clearChallenge() {
     _phrase = '';
     _challengeSet = false;
