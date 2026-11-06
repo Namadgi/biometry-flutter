@@ -1215,7 +1215,6 @@ void main() {
             token: 'test-token',
             client: mockHttpClient,
             userId: 'john-doe',
-            fullName: 'John Doe',
           );
 
       test('warns once per process when initialize() generates the phrase',
