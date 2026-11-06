@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:biometry/src/biometry.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -819,6 +820,46 @@ void main() {
         });
       });
 
+      group('after clearChallenge', () {
+        setUp(Biometry.clearChallenge);
+
+        test('phraseWords throws instead of returning an empty phrase', () {
+          expect(() => biometry.phraseWords, throwsStateError);
+        });
+
+        test('livenessCheck throws without sending a request', () async {
+          clearInteractions(mockHttpClient);
+          await expectLater(
+              biometry.livenessCheck(video: mockFile), throwsStateError);
+          verifyNever(mockHttpClient.send(any));
+        });
+
+        test('voiceVerify throws without sending a request', () async {
+          clearInteractions(mockHttpClient);
+          await expectLater(
+              biometry.voiceVerify(video: mockFile), throwsStateError);
+          verifyNever(mockHttpClient.send(any));
+        });
+
+        test('faceVerify needs no challenge and sends an empty phrase',
+            () async {
+          String? sentPhrase;
+          when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+            final request =
+                invocation.positionalArguments[0] as http.MultipartRequest;
+            final requestJson =
+                jsonDecode(request.fields['request']!) as Map<String, dynamic>;
+            sentPhrase = requestJson['phrase'] as String;
+            return http.StreamedResponse(bodyStream('{"data":{}}'), 200);
+          });
+
+          final response = await biometry.faceVerify(video: mockFile);
+
+          expect(response.statusCode, 200);
+          expect(sentPhrase, '');
+        });
+      });
+
       for (final invalid in <String>[
         '',
         '123456', // too short
@@ -837,6 +878,57 @@ void main() {
           expect(biometry.phrase, '2468013');
         });
       }
+    });
+
+    group('device-generated challenge warning', () {
+      late DebugPrintCallback originalDebugPrint;
+      late List<String> printed;
+
+      setUp(() {
+        printed = <String>[];
+        originalDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) printed.add(message);
+        };
+        Biometry.debugResetDeviceChallengeWarning();
+      });
+
+      tearDown(() {
+        debugPrint = originalDebugPrint;
+        // ignore: deprecated_member_use_from_same_package
+        Biometry.resetPhrase();
+      });
+
+      List<String> warnings() => printed
+          .where((m) => m.contains('no replay protection'))
+          .toList();
+
+      Future<Biometry> init() => Biometry.initialize(
+            token: 'test-token',
+            client: mockHttpClient,
+            userId: 'john-doe',
+            fullName: 'John Doe',
+          );
+
+      test('warns once per process when initialize() generates the phrase',
+          () async {
+        Biometry.clearChallenge();
+        await init();
+        Biometry.clearChallenge();
+        await init();
+
+        expect(warnings(), hasLength(1));
+        expect(warnings().single,
+            contains('/concepts/liveness-challenge/'));
+        expect(warnings().single, contains('Biometry.setChallenge()'));
+      });
+
+      test('does not warn when a challenge was set', () async {
+        Biometry.setChallenge('48719352');
+        await init();
+
+        expect(warnings(), isEmpty);
+      });
     });
   });
 }

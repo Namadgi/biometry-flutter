@@ -121,13 +121,15 @@ print(Biometry.challengeWords('48719352'));
 
 `setChallenge` accepts only the digits `0`-`9`, 7 to 12 of them, and throws an `ArgumentError` otherwise. The SDK displays and sends the challenge exactly as given. It stays set, including across `Biometry.initialize()` and across calls (one recording can go to `livenessCheck` and then `voiceVerify`), until you call `setChallenge` again or `Biometry.clearChallenge()`. Call `setChallenge` for every login attempt, and `clearChallenge()` when the user abandons one.
 
+After `clearChallenge()` there is no phrase, so `phraseWords`, `livenessCheck` and `voiceVerify` throw a `StateError` until you call `setChallenge` (or `initialize()` generates the deprecated fallback). `faceVerify` needs no challenge and keeps working.
+
 Why 8 digits from 1-9: the voice engine's quality check needs at least 7 recognised words, so one misheard digit in a 7-digit phrase already fails; 8 leaves a margin, and the Biometry console uses 8 too. `0` is left out because people say it as "zero" or "oh", which hurts voice matching.
 
 When your backend checks liveness, it must send **its own stored copy** of the challenge as `phrase`, never a phrase that came back from the device. A phrase chosen or returned by the device doesn't stop replays: someone who controls the device can pair a pre-recorded video with whatever digits that video happens to say.
 
 > **Replay protection needs your backend in the path.** When the app calls Biometry directly with a token (direct mode), the phrase comes from the device, so there is no replay protection. Use proxy mode, where the SDK calls your backend and your backend injects its stored copy of the challenge into `phrase` before forwarding to Biometry. See [Backend proxy](https://developer.biometrysolutions.com/concepts/backend-proxy/).
 
-> **Deprecated:** if you don't call `setChallenge`, `Biometry.initialize()` still generates 7 digits from `1`-`9` on the device (and `Biometry.resetPhrase()` generates new ones). This keeps existing apps working but gives no replay protection. Move to a backend-issued challenge.
+> **Deprecated:** if you don't call `setChallenge` (the challenge is omitted), `Biometry.initialize()` still generates 7 digits from `1`-`9` on the device (and `Biometry.resetPhrase()` generates new ones), and prints a one-time warning (once per process) that device-generated challenges give no replay protection. This keeps existing apps working. Move to a backend-issued challenge: see [Liveness challenge](https://developer.biometrysolutions.com/concepts/liveness-challenge/). An empty or invalid challenge passed to `setChallenge` is never replaced by a fallback; it throws.
 
 ### Using the Scanner Widget
 

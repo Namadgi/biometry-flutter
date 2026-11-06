@@ -2,7 +2,7 @@
 
 ### Added
 - `Biometry.setChallenge(challenge)` — use the liveness challenge your backend issued as the phrase the user speaks (BM-526). The SDK displays it exactly as given and sends it spelled out as words in `phrase`. It must be the digits `0`-`9` only, 7 to 12 of them (`Biometry.minChallengeDigits`, `Biometry.maxChallengeDigits`); anything else throws an `ArgumentError` instead of falling back to local digits. A challenge set before `initialize()` is kept, and stays set across calls (one recording can go to `livenessCheck()` and then `voiceVerify()`); it is replaced only by another `setChallenge`, `clearChallenge()` or `resetPhrase()`. Call `setChallenge` for every login attempt. We recommend 8 distinct digits from 1-9.
-- `Biometry.clearChallenge()` — forgets the challenge when a login attempt is abandoned; the next `initialize()` falls back to the deprecated device-generated digits unless `setChallenge` is called first.
+- `Biometry.clearChallenge()` — forgets the challenge when a login attempt is abandoned; the next `initialize()` falls back to the deprecated device-generated digits unless `setChallenge` is called first. Until then `phraseWords`, `livenessCheck()` and `voiceVerify()` throw a `StateError` instead of sending an empty phrase or starting a near-empty recording; `faceVerify()` needs no challenge and still works.
 - `Biometry.challengeWords(challenge)` — spells a challenge out as the words to show (for example in `BiometryScannerWidget(phrase: ...)`) without a `Biometry` instance.
 - `phrase` getter returning the current phrase digits unchanged (for example `"48719352"`).
 
@@ -10,7 +10,7 @@
 - The device-generated fallback phrase now draws its 7 digits from 1-9 instead of 0-9. `0` is said in several ways ("zero", "oh"), which hurts voice matching (BM-450).
 
 ### Deprecated
-- Generating the phrase on the device: the digits `initialize()` picks when no challenge is set, and `Biometry.resetPhrase()`. A device-chosen phrase does not stop a pre-recorded video being replayed with a matching phrase. Have your backend generate the challenge, store it, and send its own copy to the liveness call. Existing apps keep working unchanged.
+- Generating the phrase on the device: the digits `initialize()` picks when no challenge is set, and `Biometry.resetPhrase()`. A device-chosen phrase does not stop a pre-recorded video being replayed with a matching phrase. Have your backend generate the challenge, store it, and send its own copy to the liveness call. Existing apps keep working, but the first fallback in a process now prints a one-time deprecation warning (via `debugPrint`) pointing to https://developer.biometrysolutions.com/concepts/liveness-challenge/.
 
 ## [2.0.0] - 2026-07-21
 
