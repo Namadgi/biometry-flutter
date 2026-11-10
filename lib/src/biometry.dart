@@ -43,8 +43,6 @@ class Biometry {
   static const String _apiGatewayV2Path = '/api-gateway/v2';
   static String _phrase = '';
 
-  // Generate a 7-digit number with unique digits from 0-9.
-
   /// Project API token, or `null` in proxy mode (no `Authorization` header is
   /// added by the SDK then).
   final String? _token;
@@ -190,7 +188,10 @@ class Biometry {
     );
     // Keep a challenge set with setChallenge() before initialize(); otherwise
     // fall back to the deprecated device-generated phrase.
-    if (!_challengeSet) _phrase = _generateDevicePhrase();
+    if (!_challengeSet) {
+      _phrase = _generateDevicePhrase();
+      _warnDeviceGeneratedChallenge();
+    }
 
     if (kDebugMode) {
       debugPrint("Phrase: $_phrase");
@@ -326,6 +327,42 @@ class Biometry {
     return digits.take(7).join();
   }
 
+  /// Link to the dev portal guide on backend-issued challenges.
+  static const String _challengeDocsUrl =
+      'https://developer.biometrysolutions.com/concepts/liveness-challenge/';
+
+  /// Whether the device-generated challenge warning was already printed in
+  /// this process.
+  static bool _deviceChallengeWarned = false;
+
+  /// Prints a one-time deprecation warning (once per process) when the SDK
+  /// falls back to a phrase generated on the device.
+  static void _warnDeviceGeneratedChallenge() {
+    if (_deviceChallengeWarned) return;
+    _deviceChallengeWarned = true;
+    debugPrint('Biometry: no liveness challenge was set, so the phrase was '
+        'generated on the device. This is deprecated: device-generated '
+        'challenges give no replay protection. Pass a challenge issued by '
+        'your backend with Biometry.setChallenge(). See $_challengeDocsUrl');
+  }
+
+  /// Lets tests see the one-time device-challenge warning again.
+  @visibleForTesting
+  static void debugResetDeviceChallengeWarning() {
+    _deviceChallengeWarned = false;
+  }
+
+  /// The phrase as words, for calls that need the user to have spoken a
+  /// challenge. Throws a [StateError] when there is none (for example after
+  /// [clearChallenge]), instead of sending an empty phrase.
+  static String _requirePhraseWords() {
+    if (_phrase.isEmpty) {
+      throw StateError('No liveness challenge set: call '
+          'Biometry.setChallenge() or Biometry.initialize() first.');
+    }
+    return _toWords(_phrase);
+  }
+
   /// Sets the liveness challenge issued by **your backend** as the phrase the
   /// user speaks.
   ///
@@ -367,7 +404,9 @@ class Biometry {
   ///
   /// The current phrase is cleared, and the next [initialize] falls back to
   /// generating digits on the device (deprecated) unless you call
-  /// [setChallenge] first.
+  /// [setChallenge] first. Until then, [phraseWords], [livenessCheck],
+  /// [voiceVerify] and [enrolVoice] throw a [StateError] instead of using an
+  /// empty phrase; [faceVerify] needs no challenge and still works.
   static void clearChallenge() {
     _phrase = '';
     _challengeSet = false;
@@ -386,6 +425,7 @@ class Biometry {
   static void resetPhrase() {
     _phrase = _generateDevicePhrase();
     _challengeSet = false;
+    _warnDeviceGeneratedChallenge();
     if (kDebugMode) {
       debugPrint("Phrase: $_phrase");
     }
@@ -501,7 +541,10 @@ class Biometry {
 
   /// Returns the phrase as a string of words. See also [challengeWords],
   /// which needs no instance.
-  String get phraseWords => _toWords(_phrase);
+  ///
+  /// Throws a [StateError] when no phrase is set (after [clearChallenge]),
+  /// so a scanner is never started with an empty phrase.
+  String get phraseWords => _requirePhraseWords();
 
   /// Returns the phrase as a string of integers.
   String get phraseAsIntList {
@@ -780,7 +823,9 @@ class Biometry {
 
     final requestJson = jsonEncode({
       'user_id': _userId,
-      'phrase': phraseWords,
+      // Face verify needs no challenge, so an empty phrase is sent as is
+      // rather than throwing like livenessCheck and voiceVerify.
+      'phrase': _toWords(_phrase),
       'session_id': sessionId,
       if (vocabulary != null) 'vocabulary': vocabulary,
     });
