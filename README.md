@@ -134,7 +134,7 @@ Your backend must:
 
 1. Authenticate your user (with your own session, cookie or the `headers` you pass here).
 2. Accept only the routes your app uses.
-3. Never pass the request body through. Rebuild it from the fields and files that call needs, **set** `user_id` to the signed-in user (do not just compare it: the gateway's JSON decoder matches keys case-insensitively, so a duplicate `USER_ID` key can slip past a check), keep a `session_id` only if it was started for that user, and drop the query string (except `warmup=true` on session start).
+3. Never pass the request body through. Rebuild it from the fields and files that call needs, **set** `user_id` to the signed-in user (do not just compare it: the gateway's JSON decoder matches keys case-insensitively, so a duplicate `USER_ID` key can slip past a check), keep a `session_id` only if it was started for that user, and drop the query string (except `warmup=true` on session start). The same goes for IDs in the path: answer `403` unless a `{user_id}` is the signed-in user and a `{session_id}` was started for that user, so nobody can end another user's session or read their consent approvals.
 4. Send the rebuilt request to the matching Biometry v2 endpoint, `https://api.biometrysolutions.com/api-gateway/v2` followed by the default path (for example `<baseUrl>/liveness` goes to `https://api.biometrysolutions.com/api-gateway/v2/liveness`), adding `Authorization: Bearer <your Biometry API token>`.
 
 In proxy mode your backend also owns two things:

@@ -64,13 +64,28 @@ class BiometryHomePageState extends State<BiometryHomePage>
   // The user ticked the consent checkbox in this app.
   bool _consentAgreed = false;
   ConsentStatus? _consentStatus;
+  // The user ID the active session was initialized with; the User ID field
+  // may be edited afterwards, so completed requests use this one.
+  String? _sessionUserId;
+  // Users (per backend) with a consent request still running. Consent
+  // requests for one user run one at a time, even across Initialize: a slow
+  // Revoke from an old session would otherwise reach the server after the
+  // new session gave consent and withdraw it. Other users are not blocked.
+  final Set<String> _consentUsersInFlight = {};
+  String? get _consentKey => _sessionUserId == null
+      ? null
+      : '${_proxyBaseUrl ?? 'direct'}|$_sessionUserId';
+  bool get _consentInFlight => _consentUsersInFlight.contains(_consentKey);
   // Set in proxy mode: your backend records consent, not the app.
   String? _proxyBaseUrl;
   Map<String, String>? _proxyHeaders;
 
   File? _capturedVideo;
   String _result = '';
-  bool _isProcessing = false;
+  // Requests still running. Each request ends only its own count, so an
+  // old request finishing cannot hide the spinner of a newer one.
+  int _pendingRequests = 0;
+  bool get _isProcessing => _pendingRequests > 0;
   Biometry? _biometry;
   bool _isBiometryInitialized = false;
   // Bumped on every Initialize tap, so a slower earlier call that finishes
@@ -125,8 +140,11 @@ class BiometryHomePageState extends State<BiometryHomePage>
       _isInitializing = true;
       _isBiometryInitialized = false;
       _capturedVideo = null;
-      // The recorded consent belonged to the previous session's user.
+      // The recorded consent and the ticked agreement belonged to the
+      // previous session's user.
       _consentStatus = null;
+      _consentAgreed = false;
+      _sessionUserId = null;
     });
     if (oldVideo != null) {
       try {
@@ -165,6 +183,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
       }
       setState(() {
         _biometry = biometry;
+        _sessionUserId = userId;
         _isBiometryInitialized = true;
       });
 
@@ -216,59 +235,78 @@ class BiometryHomePageState extends State<BiometryHomePage>
       _showSnackBar('Please scan a person first.');
       return;
     }
+    // A request started for one session must not show its result after
+    // Initialize has replaced that session.
+    final generation = _initGeneration;
+    _beginRequest();
+    try {
+      final response = await operationCallback();
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        _showResult(generation, '$successMessage\n${response.body}');
+      } else {
+        _showResult(generation,
+            '$errorMessage: ${response.statusCode}\n${response.body}');
+      }
+    } on HttpException catch (e) {
+      _showResult(generation, 'Network error: $e');
+    } on FormatException catch (e) {
+      _showResult(generation, 'Invalid response format: $e');
+    } catch (e) {
+      _showResult(generation, 'Unexpected error: $e');
+    } finally {
+      _endRequest();
+    }
+  }
+
+  void _beginRequest() {
     setState(() {
-      _isProcessing = true;
+      _pendingRequests++;
       _result = '';
       _animationController.forward();
     });
-    try {
-      final response = await operationCallback();
-      setState(() {
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          _result = '$successMessage\n${response.body}';
-        } else {
-          _result = '$errorMessage: ${response.statusCode}\n${response.body}';
-        }
-        _showResultsPanel = true;
-      });
-    } on HttpException catch (e) {
-      setState(() {
-        _result = 'Network error: $e';
-        _showResultsPanel = true;
-      });
-    } on FormatException catch (e) {
-      setState(() {
-        _result = 'Invalid response format: $e';
-        _showResultsPanel = true;
-      });
-    } catch (e) {
-      setState(() {
-        _result = 'Unexpected error: $e';
-        _showResultsPanel = true;
-      });
-    } finally {
-      setState(() {
-        _isProcessing = false;
-        _animationController.reverse();
-      });
-    }
+  }
+
+  void _endRequest() {
+    _pendingRequests--;
+    if (!mounted) return;
+    setState(() {
+      if (_pendingRequests == 0) _animationController.reverse();
+    });
+  }
+
+  /// Shows [text] as the result, unless the request belonged to a session
+  /// that Initialize has since replaced.
+  void _showResult(int generation, String text) {
+    if (!mounted || generation != _initGeneration) return;
+    setState(() {
+      _result = text;
+      _showResultsPanel = true;
+    });
   }
 
   /// Gives or withdraws the user's authorization and storage consent, or
   /// reads it back. Enrollment needs both consents (403 without them).
-  Future<void> _runConsentOperation(
+  /// Returns true when the operation succeeded and its result was shown.
+  Future<bool> _runConsentOperation(
       Future<ConsentStatus> Function() operation, String action) async {
     if (_biometry == null || !_isBiometryInitialized) {
       _showSnackBar('Biometry is not initialized.');
-      return;
+      return false;
     }
-    setState(() {
-      _isProcessing = true;
-      _result = '';
-      _animationController.forward();
-    });
+    final key = _consentKey;
+    if (key == null) return false;
+    if (_consentUsersInFlight.contains(key)) {
+      _showSnackBar('A consent request for this user is still running.');
+      return false;
+    }
+    // A consent request started for one session must not publish its result
+    // after Initialize has replaced that session.
+    final generation = _initGeneration;
+    _consentUsersInFlight.add(key);
+    _beginRequest();
     try {
       final status = await operation();
+      if (!mounted || generation != _initGeneration) return false;
       setState(() {
         _consentStatus = status;
         _result = 'Consent for ${status.userId}\n\n'
@@ -277,16 +315,15 @@ class BiometryHomePageState extends State<BiometryHomePage>
             '${status.canEnrol ? 'Ready to enroll.' : 'Enrollment needs both consents.'}';
         _showResultsPanel = true;
       });
+      return true;
     } catch (e) {
-      setState(() {
-        _result = 'Failed to $action consent: $e';
-        _showResultsPanel = true;
-      });
+      _showResult(generation, 'Failed to $action consent: $e');
+      return false;
     } finally {
-      setState(() {
-        _isProcessing = false;
-        _animationController.reverse();
-      });
+      // Release the guard only if this request still owns it; a newer
+      // session's request may be running and keeps its own guard.
+      _consentUsersInFlight.remove(key);
+      _endRequest();
     }
   }
 
@@ -307,6 +344,10 @@ class BiometryHomePageState extends State<BiometryHomePage>
   /// does not forward the SDK's consent calls; it records consent for the
   /// signed-in user itself (`POST /onboarding/consent`).
   Future<ConsentStatus> _recordConsentOnBackend(String baseUrl) async {
+    final userId = _sessionUserId;
+    if (userId == null) {
+      throw StateError('Biometry is not initialized.');
+    }
     final response = await http.post(
       Uri.parse('${baseUrl.replaceFirst(RegExp(r'/+$'), '')}/onboarding/consent'),
       headers: {...?_proxyHeaders, 'content-type': 'application/json'},
@@ -316,7 +357,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
       throw Exception('${response.statusCode} ${response.body}');
     }
     return ConsentStatus(
-        userId: _userIdController.text.trim(),
+        userId: userId,
         authorization: true,
         storage: true);
   }
@@ -334,19 +375,29 @@ class BiometryHomePageState extends State<BiometryHomePage>
       _showSnackBar('In proxy mode your backend records and revokes consent.');
       return;
     }
-    await _runConsentOperation(() => _biometry!.revokeConsent(), 'revoke');
+    final revoked =
+        await _runConsentOperation(() => _biometry!.revokeConsent(), 'revoke');
+    if (!revoked || !mounted) return;
     setState(() => _consentAgreed = false);
   }
 
   Future<void> _endSession() async {
+    // Remember this session's video now: by the time the request finishes,
+    // Initialize may have started a new session with its own video.
+    final video = _capturedVideo;
     await _executeBiometricOperation(
       operationCallback: () => _biometry!.endSession(),
       successMessage: 'Session ended successfully!',
       errorMessage: 'Failed to end session',
     );
     // Clear captured video for security
-    if (_capturedVideo != null) {
-      await _capturedVideo!.delete();
+    if (video == null) return;
+    try {
+      await video.delete();
+    } catch (_) {
+      // Initialize already deleted it.
+    }
+    if (mounted && _capturedVideo == video) {
       setState(() {
         _capturedVideo = null;
       });
@@ -433,6 +484,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
       return;
     }
     final phrase = _biometry!.phraseAsIntList;
+    final generation = _initGeneration;
     final captured = await showModalBottomSheet<File?>(
       backgroundColor: AppTheme.primaryColor,
       context: context,
@@ -491,6 +543,18 @@ class BiometryHomePageState extends State<BiometryHomePage>
         );
       },
     );
+    if (captured != null && (!mounted || generation != _initGeneration)) {
+      // Recorded for the old session's phrase; it must not be sent with
+      // the new session.
+      try {
+        await captured.delete();
+      } catch (_) {
+        // Already gone.
+      }
+      if (mounted) _showSnackBar('Session changed; please scan again.');
+      return;
+    }
+    if (!mounted) return;
     if (captured != null) {
       setState(() {
         _capturedVideo = captured;
@@ -763,8 +827,10 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             const SizedBox(height: 8),
                             CheckboxListTile(
                               value: _consentAgreed,
-                              onChanged: (value) =>
-                                  setState(() => _consentAgreed = value ?? false),
+                              onChanged: _consentInFlight
+                                  ? null
+                                  : (value) => setState(
+                                      () => _consentAgreed = value ?? false),
                               activeColor: AppTheme.accentColor,
                               contentPadding: EdgeInsets.zero,
                               controlAffinity: ListTileControlAffinity.leading,
@@ -791,7 +857,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             _buildActionButton(
                               label: 'Give Consent',
                               icon: Icons.check_circle,
-                              onPressed: _giveConsent,
+                              onPressed: _consentInFlight ? null : _giveConsent,
                               tooltip:
                                   'Record the user\'s authorization and storage consent',
                             ),
@@ -800,8 +866,9 @@ class BiometryHomePageState extends State<BiometryHomePage>
                               icon: Icons.fact_check,
                               // Proxy mode: the SDK's consent calls throw;
                               // your backend checks consent instead.
-                              onPressed:
-                                  _proxyBaseUrl == null ? _checkConsent : null,
+                              onPressed: _proxyBaseUrl == null && !_consentInFlight
+                                  ? _checkConsent
+                                  : null,
                               tooltip: _proxyBaseUrl == null
                                   ? 'Show the consent recorded for this user'
                                   : 'In proxy mode your backend checks consent',
@@ -809,8 +876,9 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             _buildActionButton(
                               label: 'Revoke Consent',
                               icon: Icons.block,
-                              onPressed:
-                                  _proxyBaseUrl == null ? _revokeConsent : null,
+                              onPressed: _proxyBaseUrl == null && !_consentInFlight
+                                  ? _revokeConsent
+                                  : null,
                               tooltip: _proxyBaseUrl == null
                                   ? 'Withdraw both consents'
                                   : 'In proxy mode your backend withdraws consent',
