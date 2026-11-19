@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:io';
 
 import 'package:biometry/biometry.dart';
 import 'package:biometry/biometry_scanner_widget.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 // theme constants
 class AppTheme {
@@ -53,7 +55,11 @@ class BiometryHomePageState extends State<BiometryHomePage>
     with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _tokenController = TextEditingController();
-  final TextEditingController _fullNameController = TextEditingController();
+  final TextEditingController _baseUrlController = TextEditingController();
+  // Your app's own session token, sent to your backend proxy. The example
+  // proxy (biometry-web-sdk examples/proxy-server, ALLOW_DEMO_AUTH=1)
+  // accepts "demo-app-token".
+  final TextEditingController _appTokenController = TextEditingController();
   final TextEditingController _userIdController = TextEditingController();
   final TextEditingController _consentIdController = TextEditingController();
 
@@ -62,6 +68,10 @@ class BiometryHomePageState extends State<BiometryHomePage>
   bool _isProcessing = false;
   Biometry? _biometry;
   bool _isBiometryInitialized = false;
+  // Bumped on every Initialize tap, so a slower earlier call that finishes
+  // late cannot install its session or challenge over a newer one.
+  int _initGeneration = 0;
+  bool _isInitializing = false;
   late AnimationController _animationController;
   bool _showResultsPanel = false;
 
@@ -77,7 +87,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
   @override
   void dispose() {
     _tokenController.dispose();
-    _fullNameController.dispose();
+    _baseUrlController.dispose();
+    _appTokenController.dispose();
     _userIdController.dispose();
     _consentIdController.dispose();
     _animationController.dispose();
@@ -86,13 +97,10 @@ class BiometryHomePageState extends State<BiometryHomePage>
 
   Future<void> _initializeBiometry() async {
     final token = _tokenController.text.trim();
-    if (token.isEmpty) {
-      _showSnackBar('Please enter a valid token.');
-      return;
-    }
-    final fullName = _fullNameController.text.trim();
-    if (fullName.isEmpty) {
-      _showSnackBar('Please enter your full name.');
+    final baseUrl = _baseUrlController.text.trim();
+    final appToken = _appTokenController.text.trim();
+    if (token.isEmpty && baseUrl.isEmpty) {
+      _showSnackBar('Enter a backend proxy URL, or a token for direct mode.');
       return;
     }
     final userId = _userIdController.text.trim();
@@ -100,20 +108,85 @@ class BiometryHomePageState extends State<BiometryHomePage>
       _showSnackBar('Please enter a user ID.');
       return;
     }
+    final generation = ++_initGeneration;
+    // Drop the previous session's challenge, so switching from proxy mode to
+    // direct mode never shows the old backend digits.
+    Biometry.clearChallenge();
+    // A recording made for the old challenge must not be sent with the new
+    // session and phrase, so drop it and require a new one.
+    final oldVideo = _capturedVideo;
+    // Hide the actions until this new session (and its challenge) is ready,
+    // so a failed re-initialize never leaves the old session usable.
+    setState(() {
+      _isInitializing = true;
+      _isBiometryInitialized = false;
+      _capturedVideo = null;
+    });
+    if (oldVideo != null) {
+      try {
+        await oldVideo.delete();
+      } catch (_) {
+        // Already gone; nothing else to clean up.
+      }
+    }
     try {
-      _biometry = await Biometry.initialize(
-        token: token,
+      // Proxy mode: with a base URL the app holds no Biometry token; your
+      // backend adds it. The SDK calls the default proxy paths
+      // (Biometry.defaultProxyPaths, e.g. <baseUrl>/sessions and
+      // <baseUrl>/liveness), which the example proxy serves; pass `paths`
+      // if your backend uses other routes. Direct mode (token only) is for
+      // testing.
+      final appHeaders = baseUrl.isNotEmpty && appToken.isNotEmpty
+          ? {'Authorization': 'Bearer $appToken'}
+          : null;
+      final biometry = await Biometry.initialize(
+        token: token.isEmpty ? null : token,
+        baseUrl: baseUrl.isEmpty ? null : baseUrl,
         userId: userId,
-        fullName: fullName,
+        // Only used in proxy mode: your backend checks it to know the user.
+        headers: appHeaders,
       );
+      if (!mounted || generation != _initGeneration) return;
+      if (baseUrl.isNotEmpty) {
+        // Proxy mode: the backend issues the liveness challenge for this
+        // session and writes its own copy into `phrase`, so show its digits.
+        final challenge =
+            await _fetchChallenge(baseUrl, appHeaders, biometry.sessionId);
+        if (!mounted || generation != _initGeneration) return;
+        Biometry.setChallenge(challenge);
+      }
       setState(() {
+        _biometry = biometry;
         _isBiometryInitialized = true;
       });
 
       _showSnackBar('Biometry initialized successfully');
     } catch (e) {
+      if (!mounted || generation != _initGeneration) return;
       _showSnackBar('Failed to initialize Biometry: $e');
+    } finally {
+      if (mounted && generation == _initGeneration) {
+        setState(() {
+          _isInitializing = false;
+        });
+      }
     }
+  }
+
+  /// Asks the backend proxy for this session's liveness challenge
+  /// (biometry-web-sdk examples/proxy-server: `POST /challenge`). The caller
+  /// installs it with Biometry.setChallenge once the session is still current.
+  Future<String> _fetchChallenge(
+      String baseUrl, Map<String, String>? headers, String sessionId) async {
+    final response = await http.post(
+      Uri.parse('${baseUrl.replaceFirst(RegExp(r'/+$'), '')}/challenge'),
+      headers: {...?headers, 'content-type': 'application/json'},
+      body: jsonEncode({'session_id': sessionId}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Could not get a liveness challenge: ${response.body}');
+    }
+    return jsonDecode(response.body)['challenge'] as String;
   }
 
   // method to handle biometric operations
@@ -223,7 +296,7 @@ class BiometryHomePageState extends State<BiometryHomePage>
         .map(
             (a) => '  • ${a.consentId} — approved on ${a.approvedAt.toLocal()}')
         .join('\n');
-    return 'Consent Approvals for ${_biometry!.fullName}\n\n$entries';
+    return 'Consent Approvals for ${_userIdController.text.trim()}\n\n$entries';
   }
 
   Future<void> _endSession() async {
@@ -509,9 +582,54 @@ class BiometryHomePageState extends State<BiometryHomePage>
                           ),
                           const SizedBox(height: 16),
                           TextFormField(
+                            controller: _baseUrlController,
+                            decoration: InputDecoration(
+                              labelText: 'Backend proxy URL (recommended)',
+                              hintText: 'https://your-backend.example.com',
+                              labelStyle:
+                                  TextStyle(color: AppTheme.textColorSecondary),
+                              prefixIcon: Icon(Icons.dns,
+                                  color: AppTheme.accentColor),
+                              filled: true,
+                              fillColor: const Color(0xFF1F2937),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 12),
+                            ),
+                            style: const TextStyle(color: Colors.white),
+                            keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.next,
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _appTokenController,
+                            decoration: InputDecoration(
+                              labelText: 'App token for your backend (proxy mode)',
+                              hintText: 'demo-app-token',
+                              labelStyle:
+                                  TextStyle(color: AppTheme.textColorSecondary),
+                              prefixIcon: Icon(Icons.lock,
+                                  color: AppTheme.accentColor),
+                              filled: true,
+                              fillColor: const Color(0xFF1F2937),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 12),
+                            ),
+                            style: const TextStyle(color: Colors.white),
+                            textInputAction: TextInputAction.next,
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
                             controller: _tokenController,
                             decoration: InputDecoration(
-                              labelText: 'Token',
+                              labelText: 'Token (direct mode, testing only)',
                               labelStyle:
                                   TextStyle(color: AppTheme.textColorSecondary),
                               prefixIcon: Icon(Icons.vpn_key,
@@ -527,35 +645,9 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             ),
                             style: const TextStyle(color: Colors.white),
                             validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Please enter your token';
-                              }
-                              return null;
-                            },
-                            textInputAction: TextInputAction.next,
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _fullNameController,
-                            decoration: InputDecoration(
-                              labelText: 'Full Name',
-                              labelStyle:
-                                  TextStyle(color: AppTheme.textColorSecondary),
-                              prefixIcon: Icon(Icons.person,
-                                  color: AppTheme.accentColor),
-                              filled: true,
-                              fillColor: const Color(0xFF1F2937),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide.none,
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 12),
-                            ),
-                            style: const TextStyle(color: Colors.white),
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Please enter your full name';
+                              if ((value == null || value.trim().isEmpty) &&
+                                  _baseUrlController.text.trim().isEmpty) {
+                                return 'Enter a token or a backend proxy URL';
                               }
                               return null;
                             },
@@ -591,7 +683,8 @@ class BiometryHomePageState extends State<BiometryHomePage>
                           const SizedBox(height: 16),
                           _buildActionButton(
                             label: 'Initialize Biometry',
-                            onPressed: _initializeBiometry,
+                            onPressed:
+                                _isInitializing ? null : _initializeBiometry,
                             icon: Icons.start,
                             tooltip: 'Start the biometric session',
                           ),
@@ -617,8 +710,10 @@ class BiometryHomePageState extends State<BiometryHomePage>
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'Consents are required for enrollment. Enter the ID of a '
-                              'consent template configured in the Biometry dashboard.',
+                              'Custom consent templates you created for your own '
+                              'documents. They do not unlock enrollment: enrollment '
+                              'needs authorization and storage consent, which your '
+                              'backend records.',
                               style: TextStyle(
                                 color: Color(0xFF9CA3AF),
                                 fontSize: 14,

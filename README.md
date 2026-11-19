@@ -17,7 +17,7 @@ This package is tailored specifically for developers building high-security appl
 
 ### Prerequisites
 
-- Obtain an API token from [Biometry](https://console.biometrysolutions.com).
+- Obtain an API token from [Biometry](https://console.biometrysolutions.com), and keep it on your backend (see [Proxy mode](#proxy-mode-recommended)).
 - Flutter SDK version `>=3.0.0 <4.0.0`
 - Android minimum SDK version: 21
 - iOS minimum platform version: 13.0
@@ -83,27 +83,117 @@ end
 
 ### Initializing Biometry
 
-`userId` is an opaque, customer-provided identity key (letters, digits, and `._:@-` only, max 128 characters) — it's what the Biometry API uses to identify the user, and is required. `fullName` is kept for your own display purposes only; it is never sent to the API.
+`userId` is an opaque, customer-provided identity key (letters, digits, and `._:@-` only, max 128 characters) — it's what the Biometry API uses to identify the user, and is required.
+
+#### Proxy mode (recommended)
+
+Your Biometry API token is project-wide and long-lived. Anything shipped inside an APK or IPA can be extracted, so keep the token on your backend and point the SDK at it with `baseUrl`:
+
+```dart
+final biometry = await Biometry.initialize(
+  baseUrl: 'https://your-backend.example.com/biometry',
+  userId: 'user-1234',
+  // Optional: your own app's credentials, checked by your backend.
+  headers: {'Authorization': 'Bearer $yourAppSessionToken'},
+);
+```
+
+In proxy mode the SDK calls `baseUrl` followed by the Biometry v2 path without the `/api-gateway/v2` prefix, so it calls `https://your-backend.example.com/biometry/sessions`, `.../biometry/liveness`, and so on. Without a `token` it sends no `Authorization` header of its own. Use an `https` `baseUrl` outside local development: your app's headers and the user's recordings go to it. Release builds refuse an `http` `baseUrl` (`initialize()` throws an `ArgumentError`) except for `localhost`, `127.0.0.1` and `::1`, because Android's and iOS's cleartext rules do not cover Flutter's own HTTP client. Debug and profile builds accept any `http` address, so a local backend works during development (for example `http://10.0.2.2:8787` from the Android emulator). The default paths are in `Biometry.defaultProxyPaths`:
+
+| `ProxyOperation` | SDK method | Default path |
+|---|---|---|
+| `startSession` | `initialize()` | `POST /sessions?warmup=true` |
+| `endSession` | `endSession()` | `POST /sessions/{session_id}/end` |
+| `liveness` | `livenessCheck()` | `POST /liveness` |
+| `faceVerify` | `faceVerify()` | `POST /face-verify` |
+| `voiceVerify` | `voiceVerify()` | `POST /voice-verify` |
+| `faceMatch` | `faceMatch()` | `POST /face-match` |
+| `enrollFace` | `enrolFace()` | `POST /enrollments/face` |
+| `enrollVoice` | `enrolVoice()` | `POST /enrollments/voice` |
+| `checkDocument` | `docAuth()` | `POST /documents/check` |
+| `deepfakeCheck` | `deepfakeCheck()` | `POST /deepfake/checks` |
+| `approveConsent` | `approveConsent()` | `POST /consents/{consent_id}/approve/{user_id}` |
+| `getConsentApprovals` | `getConsentApprovals()`, `assertConsent()` | `GET /consents/my-approvals/{user_id}` |
+
+To use your own route names, pass `paths` with the operations you want to move; the others keep their defaults:
+
+```dart
+final biometry = await Biometry.initialize(
+  baseUrl: 'https://your-backend.example.com',
+  userId: 'user-1234',
+  paths: {
+    ProxyOperation.liveness: '/kyc/liveness',
+    ProxyOperation.endSession: '/kyc/sessions/{session_id}/finish',
+  },
+);
+```
+
+Each path must start with `/`, must not contain `?` or `#`, and must contain exactly the placeholders of its default path, once each (`{session_id}`, `{consent_id}`, `{user_id}`). The SDK fills them in URI-encoded. Anything else throws an `ArgumentError` from `initialize()` before any request. `paths` only applies with `baseUrl`; without it, it is ignored and a warning is printed with `debugPrint`, like `headers`.
+
+Your backend must:
+
+1. Authenticate your user (with your own session, cookie or the `headers` you pass here).
+2. Accept only the routes your app uses.
+3. Never pass the request body through. Rebuild it from the fields and files that call needs, **set** `user_id` to the signed-in user (do not just compare it: the gateway's JSON decoder matches keys case-insensitively, so a duplicate `USER_ID` key can slip past a check), keep a `session_id` only if it was started for that user, and drop the query string (except `warmup=true` on session start).
+4. Send the rebuilt request to the matching Biometry v2 endpoint, `https://api.biometrysolutions.com/api-gateway/v2` followed by the default path (for example `<baseUrl>/liveness` goes to `https://api.biometrysolutions.com/api-gateway/v2/liveness`), adding `Authorization: Bearer <your Biometry API token>`.
+
+In proxy mode your backend also does two jobs the device must not do:
+
+- **Consent.** Record the user's authorization and storage consent server-to-server with your API key, in one call keyed by the same `user_id`: `PUT /api-gateway/v2/users/{user_id}/consents` with `{"authorization": true, "storage": true}`, for example in your onboarding flow before the first enrollment. The example proxy does this in `recordConsent()` / `POST /onboarding/consent` and does not forward the app's own consent calls. `approveConsent()` / `getConsentApprovals()` are for your own custom consent templates and do **not** unlock enrollment.
+- **Liveness challenge.** Your backend issues the digits the user reads for the current session, keeps its own copy, and writes it into `phrase` on liveness and voice-verify (each may use it once per session), ignoring the phrase the app sends. A use only counts once Biometry answers `2xx`, so the user can retry with the same digits after a gateway error. face-verify needs no challenge, and the example proxy sends it without a phrase. In the app, fetch the challenge from your backend (`POST /challenge` with the `sessionId` in the example proxy) and pass it to `Biometry.setChallenge(challenge)` before showing the scanner, so the user reads your backend's digits, not ones generated on the device (see [Setting the Liveness Challenge](#setting-the-liveness-challenge)). Call `Biometry.clearChallenge()` if the user abandons the attempt. The example app does this when you fill in the backend proxy URL. Make the recording window (`scanTime`) long enough for 8 digits, about 10 seconds.
+- Your user ids must be 3 to 128 characters of `A-Za-z0-9._:@-` for the consent endpoint.
+
+The example proxy needs these Biometry API gateway changes deployed, in this order: biometry-api-gateway #147 (makes `phrase` optional on v2 face-verify; the proxy sends face-verify without one, which the current gateway refuses), then #148 (adds `PUT /api-gateway/v2/users/{user_id}/consents`). Deploy them before switching your app to proxy mode.
+
+```dart
+final biometry = await Biometry.initialize(baseUrl: backend, userId: userId, headersProvider: appAuth);
+final res = await http.post(Uri.parse('$backend/challenge'),
+    headers: {...await appAuth(), 'content-type': 'application/json'},
+    body: jsonEncode({'session_id': biometry.sessionId}));
+Biometry.setChallenge(jsonDecode(res.body)['challenge'] as String);
+// Now show BiometryScannerWidget; liveness and voice-verify will use this challenge.
+```
+
+See [Backend proxy for client SDKs](https://developer.biometrysolutions.com/concepts/backend-proxy/) on the developer portal for a full example.
+
+`headers` and `headersProvider` only apply in proxy mode: without `baseUrl` they are ignored and a warning is printed with `debugPrint`, so your app's own credentials are never sent to Biometry. `headers` are sent on every request and replace any SDK header with the same name (compared case-insensitively). If your app's session token can be refreshed while a `Biometry` instance is alive, pass `headersProvider` instead (or as well); it is called before every request and applied last:
+
+```dart
+final biometry = await Biometry.initialize(
+  baseUrl: 'https://your-backend.example.com/biometry',
+  userId: 'user-1234',
+  headersProvider: () async =>
+      {'Authorization': 'Bearer ${await auth.currentToken()}'},
+);
+```
+
+#### Direct mode (testing only)
+
+Without `baseUrl`, pass your API token and the SDK calls the Biometry API directly. Only do this for testing or internal apps, since anyone who unpacks the app can read the token:
 
 ```dart
 final biometry = await Biometry.initialize(
   token: 'your-api-token',
   userId: 'user-1234',
-  fullName: 'John Doe',
 );
 ```
+
+`initialize` throws an `ArgumentError` (an `Error`, not an `Exception`) if you pass neither `token` nor `baseUrl`, or an empty token without `baseUrl`.
+
+#### Client app headers
 
 Optionally, pass `clientAppName` and `clientAppVersion` to identify your app on every request (sent as the `X-Client-App` and `X-Client-App-Version` headers):
 
 ```dart
 final biometry = await Biometry.initialize(
-  token: 'your-api-token',
+  baseUrl: 'https://your-backend.example.com/biometry',
   userId: 'user-1234',
-  fullName: 'John Doe',
   clientAppName: 'MyApp',
   clientAppVersion: '3.2.1',
 );
 ```
+
+`fullName` is deprecated since 2.1.0. It was never sent to the v2 API and will be removed in 3.0.0; you can drop it from your `initialize` call.
 
 ### Setting the Liveness Challenge
 
@@ -127,7 +217,7 @@ Why 8 digits from 1-9: the voice engine's quality check needs at least 7 recogni
 
 When your backend checks liveness, it must send **its own stored copy** of the challenge as `phrase`, never a phrase that came back from the device. A phrase chosen or returned by the device doesn't stop replays: someone who controls the device can pair a pre-recorded video with whatever digits that video happens to say.
 
-> **Replay protection needs your backend in the path.** When the app calls Biometry directly with a token (direct mode), the phrase comes from the device, so there is no replay protection. In this release `Biometry.initialize()` always calls Biometry directly, so every SDK call is direct mode. For replay protection, upload the recording to your backend and have your backend call Biometry with its stored copy of the challenge as `phrase`. Proxy mode, where the SDK itself calls your backend and your backend injects its stored challenge before forwarding to Biometry, comes in the next release (BM-527). See [Backend proxy](https://developer.biometrysolutions.com/concepts/backend-proxy/).
+> **Replay protection needs your backend in the path.** When the app calls Biometry directly with a token (direct mode), the phrase comes from the device, so there is no replay protection. Use proxy mode, where the SDK calls your backend and your backend injects its stored copy of the challenge into `phrase` before forwarding to Biometry. See [Backend proxy](https://developer.biometrysolutions.com/concepts/backend-proxy/).
 
 > **Deprecated:** if you don't call `setChallenge` (the challenge is omitted), `Biometry.initialize()` still generates 7 digits from `1`-`9` on the device (and `Biometry.resetPhrase()` generates new ones), and prints a one-time warning (once per process) that device-generated challenges give no replay protection. This keeps existing apps working. Move to a backend-issued challenge: see [Liveness challenge](https://developer.biometrysolutions.com/concepts/liveness-challenge/). An empty or invalid challenge passed to `setChallenge` is never replaced by a fallback; it throws.
 
@@ -204,7 +294,7 @@ final deepfake = await biometry.deepfakeCheck(video: videoFile);
 
 ### Consent Handling
 
-Consent templates (their `journey_id`, header, and body text) are configured in the Biometry dashboard, not by this SDK. The SDK only records and looks up **approvals** of an existing template ID:
+Consent templates (their `journey_id`, header, and body text) are configured in the Biometry dashboard, not by this SDK. The SDK only records and looks up **approvals** of an existing template ID. These are your own custom consent documents: they do **not** record the authorization and storage consent that face/voice verification and enrollment require (record those from your backend, see [Proxy mode](#proxy-mode-recommended)):
 
 ```dart
 final response = await biometry.approveConsent(consentId: 'your-consent-template-id');
@@ -234,7 +324,7 @@ A complete, functional example application is provided within the [`example/`](e
 ## Security and Privacy
 
 Biometry adheres to strict security standards:
-- Authentication via secure API tokens.
+- Authentication via API tokens that can stay on your backend (proxy mode), so no Biometry token ships in the app.
 - Session-specific unique identifiers for enhanced traceability.
 - No persistent storage or logging of biometric data within the package.
 

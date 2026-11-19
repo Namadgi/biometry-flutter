@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert'; // for jsonEncode
 import 'dart:developer' as dev;
 import 'dart:io';
@@ -10,8 +11,56 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// Returns headers to add to a request. Called before every request, so it can
+/// return a freshly refreshed app session token. See [Biometry.initialize].
+typedef BiometryHeadersProvider = FutureOr<Map<String, String>> Function();
+
+/// The requests the SDK sends, used as keys of the `paths` map on
+/// [Biometry.initialize] to change where each one goes in proxy mode.
+///
+/// [Biometry.defaultProxyPaths] lists the default path of each operation.
+enum ProxyOperation {
+  /// Starts a session in [Biometry.initialize]: `POST /sessions`. The SDK
+  /// adds `?warmup=true`.
+  startSession,
+
+  /// [Biometry.endSession]: `POST /sessions/{session_id}/end`.
+  endSession,
+
+  /// [Biometry.livenessCheck]: `POST /liveness`.
+  liveness,
+
+  /// [Biometry.faceVerify]: `POST /face-verify`.
+  faceVerify,
+
+  /// [Biometry.voiceVerify]: `POST /voice-verify`.
+  voiceVerify,
+
+  /// [Biometry.faceMatch]: `POST /face-match`.
+  faceMatch,
+
+  /// [Biometry.enrolFace]: `POST /enrollments/face`.
+  enrollFace,
+
+  /// [Biometry.enrolVoice]: `POST /enrollments/voice`.
+  enrollVoice,
+
+  /// [Biometry.docAuth]: `POST /documents/check`.
+  checkDocument,
+
+  /// [Biometry.deepfakeCheck]: `POST /deepfake/checks`.
+  deepfakeCheck,
+
+  /// [Biometry.approveConsent]:
+  /// `POST /consents/{consent_id}/approve/{user_id}`.
+  approveConsent,
+
+  /// [Biometry.getConsentApprovals]: `GET /consents/my-approvals/{user_id}`.
+  getConsentApprovals,
+}
+
 /// A class to handle biometry-related operations against the Biometry v2 API.
-///   - [initialize] - Initializes the Biometry class with a token, user ID, full name and an optional HTTP client.
+///   - [initialize] - Initializes the Biometry class with a user ID and either a token or a backend proxy base URL.
 ///   - [scanDocument] - Scans a document using the flutter_doc_scanner plugin.
 ///   - [docAuth] - Verifies a document using the biometry service.
 ///   - [enrolFace] - Enrolls a face using the biometry service.
@@ -30,13 +79,53 @@ import 'package:path_provider/path_provider.dart';
 /// [setChallenge]. If you don't call it, [initialize] generates the digits on
 /// the device; that fallback is deprecated because it does not stop replays.
 class Biometry {
-  static const String _host = 'https://api.biometrysolutions.com';
-  static const String _apiGateway = '$_host/api-gateway';
-  static const String _apiGatewayV2 = '$_apiGateway/v2';
+  /// Default origin used when [initialize] is called without `baseUrl`.
+  static const String defaultBaseUrl = 'https://api.biometrysolutions.com';
+  static const String _apiGatewayV2Path = '/api-gateway/v2';
+
+  /// The default path of each request in proxy mode, relative to `baseUrl`.
+  ///
+  /// These are the Biometry v2 API paths without the `/api-gateway/v2`
+  /// prefix. In direct mode (no `baseUrl`) the SDK always calls
+  /// `https://api.biometrysolutions.com/api-gateway/v2` followed by these
+  /// paths. Override any of them with `paths` on [initialize].
+  static const Map<ProxyOperation, String> defaultProxyPaths = {
+    ProxyOperation.startSession: '/sessions',
+    ProxyOperation.endSession: '/sessions/{session_id}/end',
+    ProxyOperation.liveness: '/liveness',
+    ProxyOperation.faceVerify: '/face-verify',
+    ProxyOperation.voiceVerify: '/voice-verify',
+    ProxyOperation.faceMatch: '/face-match',
+    ProxyOperation.enrollFace: '/enrollments/face',
+    ProxyOperation.enrollVoice: '/enrollments/voice',
+    ProxyOperation.checkDocument: '/documents/check',
+    ProxyOperation.deepfakeCheck: '/deepfake/checks',
+    ProxyOperation.approveConsent: '/consents/{consent_id}/approve/{user_id}',
+    ProxyOperation.getConsentApprovals: '/consents/my-approvals/{user_id}',
+  };
+
+  /// Matches a `{name}` placeholder in a request path.
+  static final RegExp _placeholderPattern = RegExp(r'\{([^{}]*)\}');
+
   static String _phrase = '';
 
-  final String _token;
+  /// Project API token, or `null` in proxy mode (no `Authorization` header is
+  /// added by the SDK then).
+  final String? _token;
   final http.Client _client;
+
+  /// The prefix of every request URL: `baseUrl` in proxy mode, or
+  /// `https://api.biometrysolutions.com/api-gateway/v2` in direct mode.
+  final String _urlPrefix;
+
+  /// The path of each request, appended to [_urlPrefix].
+  final Map<ProxyOperation, String> _paths;
+
+  /// Extra headers from [initialize] sent on every request.
+  final Map<String, String> _headers;
+
+  /// Called before every request; its headers are applied after [_headers].
+  final BiometryHeadersProvider? _headersProvider;
 
   /// The session ID to be sent with all requests to encapsulate usage.
   final String sessionId;
@@ -44,8 +133,11 @@ class Biometry {
   /// The opaque, customer-provided identity key sent to the API as `user_id`.
   final String _userId;
 
-  /// The full name of the user. Kept for display purposes only — it is not
-  /// transmitted to the v2 API, which identifies users by [_userId].
+  /// The full name passed to [initialize], or an empty string.
+  ///
+  /// Not sent to the API since 2.0.0: the v2 API identifies users by `userId`.
+  @Deprecated('Not used by the v2 API, which identifies users by userId. '
+      'Will be removed in 3.0.0.')
   final String fullName;
 
   /// The path to the image of the person.
@@ -65,33 +157,132 @@ class Biometry {
     this._client,
     this.sessionId,
     this._userId,
+    // ignore: deprecated_member_use_from_same_package
     this.fullName, {
+    required String urlPrefix,
+    required Map<ProxyOperation, String> paths,
+    required Map<String, String> headers,
+    BiometryHeadersProvider? headersProvider,
     String? clientAppName,
     String? clientAppVersion,
-  })  : _clientAppName = clientAppName,
+  })  : _urlPrefix = urlPrefix,
+        _paths = paths,
+        _headers = headers,
+        _headersProvider = headersProvider,
+        _clientAppName = clientAppName,
         _clientAppVersion = clientAppVersion;
 
-  /// Initializes the Biometry class with a token, user ID, full name and an optional HTTP client.
+  /// Starts a Biometry session for [userId] and returns a ready [Biometry].
+  ///
+  /// There are two ways to authenticate:
+  ///
+  /// * **Proxy mode (recommended for apps).** Pass [baseUrl], the address of
+  ///   your own backend, and leave [token] out. Requests go to [baseUrl]
+  ///   followed by the paths in [defaultProxyPaths], so a session start goes
+  ///   to `<baseUrl>/sessions`. Your backend authenticates the app user,
+  ///   rebuilds the request, adds `Authorization: Bearer <project token>` and
+  ///   sends it to the matching `https://api.biometrysolutions.com/api-gateway/v2`
+  ///   path (the default path, even when you rename the route with [paths]).
+  ///   Use [headers] to send your app's own credentials (for
+  ///   example your user's session token) to that backend.
+  /// * **Direct mode.** Pass the project API [token] and no [baseUrl]. Requests
+  ///   go straight to the Biometry API with `Authorization: Bearer <token>`.
+  ///   Anyone who unpacks the app can extract the token, so only use this for
+  ///   testing or internal apps.
+  ///
+  /// [token] is required when [baseUrl] is not set. If both are set, the
+  /// token is sent to [baseUrl].
+  ///
+  /// [baseUrl] must use `https` in release builds; `http` is accepted there
+  /// only for `localhost`, `127.0.0.1` and `::1`. Debug and profile builds
+  /// accept any `http` address, so a local backend works during development.
+  ///
+  /// [headers] and [headersProvider] only apply in proxy mode (with
+  /// [baseUrl]). Without [baseUrl] they are ignored and a warning is printed
+  /// with `debugPrint`, so your app's credentials never go to Biometry.
+  ///
+  /// [paths] changes the path of some requests in proxy mode, so your backend
+  /// can use its own route names, for example
+  /// `{ProxyOperation.liveness: '/verify/liveness'}`. Operations you leave out
+  /// keep their [defaultProxyPaths] entry. Each path must start with `/`,
+  /// must not contain `?` or `#`, and must contain exactly the placeholders
+  /// its default has (such as `{session_id}`), once each; the SDK fills them
+  /// in URI-encoded. Like [headers], [paths] is ignored with a `debugPrint`
+  /// warning without [baseUrl].
+  ///
+  /// [headers] are added to every request after `Authorization` and the
+  /// client app headers, so a header with the same name (compared
+  /// case-insensitively) replaces them. [headersProvider] is called before
+  /// every request, including the session start, and its headers are applied
+  /// last; use it when your app's session token can be refreshed while the
+  /// [Biometry] instance is alive.
   ///
   /// [clientAppName] and [clientAppVersion] are optional. When provided, they
   /// are sent as `X-Client-App` and `X-Client-App-Version` headers on every
-  /// request to the API gateway.
+  /// request.
+  ///
+  /// [fullName] is deprecated and not sent to the API; it is only kept on the
+  /// [fullName] field for apps that still read it.
+  ///
+  /// Throws an [ArgumentError] if neither [token] nor [baseUrl] is given, if
+  /// [baseUrl] is not an absolute `http` or `https` URL, or if a path in
+  /// [paths] is invalid (only checked with [baseUrl]).
   static Future<Biometry> initialize({
-    required String token,
+    String? token,
     required String userId,
-    required String fullName,
+    @Deprecated('Not used by the v2 API, which identifies users by userId. '
+        'Will be removed in 3.0.0.')
+    String? fullName,
+    String? baseUrl,
+    Map<String, String>? headers,
+    BiometryHeadersProvider? headersProvider,
+    Map<ProxyOperation, String>? paths,
     http.Client? client,
     String? clientAppName,
     String? clientAppVersion,
   }) async {
+    final resolvedBaseUrl = _resolveBaseUrl(baseUrl);
+    final String? authToken = (token == null || token.isEmpty) ? null : token;
+    if (authToken == null && baseUrl == null) {
+      throw ArgumentError.value(token, 'token',
+          'A token is required unless baseUrl points at your own backend');
+    }
+    // headers and headersProvider are for your own backend (proxy mode). The
+    // Biometry API needs only the token, so they are ignored without baseUrl.
+    final bool proxyMode = baseUrl != null;
+    if (!proxyMode &&
+        ((headers != null && headers.isNotEmpty) || headersProvider != null)) {
+      debugPrint('Biometry: headers and headersProvider only apply with '
+          'baseUrl (proxy mode); they are ignored.');
+    }
+    final extraHeaders = Map<String, String>.unmodifiable(
+        proxyMode ? (headers ?? const {}) : const <String, String>{});
+    final BiometryHeadersProvider? extraHeadersProvider =
+        proxyMode ? headersProvider : null;
+    // Proxy mode uses the v2 paths without the /api-gateway/v2 prefix, so
+    // your backend names its own routes; direct mode calls the gateway.
+    if (!proxyMode && paths != null && paths.isNotEmpty) {
+      debugPrint('Biometry: paths only apply with baseUrl (proxy mode); '
+          'they are ignored.');
+    }
+    final urlPrefix =
+        proxyMode ? resolvedBaseUrl : '$resolvedBaseUrl$_apiGatewayV2Path';
+    final requestPaths = proxyMode ? _resolvePaths(paths) : defaultProxyPaths;
+
     await _configureAudioSession();
 
     final http.Client httpClient = client ?? http.Client();
     String id = await _fetchSessionId(
-      token,
+      _buildUri(urlPrefix, requestPaths[ProxyOperation.startSession]!,
+          query: 'warmup=true'),
+      await _resolveHeaders(
+        token: authToken,
+        clientAppName: clientAppName,
+        clientAppVersion: clientAppVersion,
+        headers: extraHeaders,
+        headersProvider: extraHeadersProvider,
+      ),
       httpClient,
-      clientAppName: clientAppName,
-      clientAppVersion: clientAppVersion,
     );
     // Keep a challenge set with setChallenge() before initialize(); otherwise
     // fall back to the deprecated device-generated phrase.
@@ -104,14 +295,147 @@ class Biometry {
       debugPrint("Phrase: $_phrase");
     }
     return Biometry._(
-      token,
+      authToken,
       httpClient,
       id,
       userId,
-      fullName,
+      fullName ?? '',
+      urlPrefix: urlPrefix,
+      paths: requestPaths,
+      headers: extraHeaders,
+      headersProvider: extraHeadersProvider,
       clientAppName: clientAppName,
       clientAppVersion: clientAppVersion,
     );
+  }
+
+  /// Returns [baseUrl] without trailing slashes, or [defaultBaseUrl].
+  static String _resolveBaseUrl(String? baseUrl) {
+    if (baseUrl == null) return defaultBaseUrl;
+    final trimmed = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null ||
+        !(uri.scheme == 'https' || uri.scheme == 'http') ||
+        uri.host.isEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      throw ArgumentError.value(baseUrl, 'baseUrl',
+          'Must be an absolute http or https URL without a query or fragment');
+    }
+    // Flutter's HTTP client ignores the Android and iOS cleartext rules, so
+    // an http baseUrl would send headers and recordings unencrypted. Debug
+    // and profile builds accept any http address for local development
+    // (for example the Android emulator's 10.0.2.2); release builds accept
+    // http only for this device.
+    if (uri.scheme == 'http' &&
+        (debugReleaseModeOverride ?? kReleaseMode) &&
+        !_isLoopbackHost(uri.host)) {
+      throw ArgumentError.value(baseUrl, 'baseUrl',
+          'Must use https in release builds (http is only allowed for '
+          'localhost, 127.0.0.1 and ::1)');
+    }
+    return trimmed;
+  }
+
+  static bool _isLoopbackHost(String host) {
+    final h = host.toLowerCase();
+    // Only the exact name: *.localhost is not guaranteed to resolve to
+    // this device.
+    if (h == 'localhost') return true;
+    final ip = InternetAddress.tryParse(h);
+    return ip != null && ip.isLoopback;
+  }
+
+  /// Lets tests check the release-build rules for [baseUrl]; null uses the
+  /// real build mode.
+  @visibleForTesting
+  static bool? debugReleaseModeOverride;
+
+  /// [defaultProxyPaths] with each override in [overrides] applied after
+  /// checking it. Throws an [ArgumentError] for an invalid path.
+  static Map<ProxyOperation, String> _resolvePaths(
+      Map<ProxyOperation, String>? overrides) {
+    if (overrides == null || overrides.isEmpty) return defaultProxyPaths;
+    final result = Map<ProxyOperation, String>.of(defaultProxyPaths);
+    overrides.forEach((operation, path) {
+      _validateProxyPath(operation, path);
+      result[operation] = path;
+    });
+    return Map.unmodifiable(result);
+  }
+
+  /// The placeholder names in [path], sorted, with duplicates kept.
+  static List<String> _placeholders(String path) =>
+      _placeholderPattern.allMatches(path).map((m) => m[1]!).toList()..sort();
+
+  static void _validateProxyPath(ProxyOperation operation, String path) {
+    final name = 'paths[ProxyOperation.${operation.name}]';
+    if (!path.startsWith('/')) {
+      throw ArgumentError.value(path, name, 'must start with "/"');
+    }
+    if (path.contains('?') || path.contains('#')) {
+      throw ArgumentError.value(path, name,
+          'must not contain "?" or "#"; the SDK adds any query string itself');
+    }
+    final expected = _placeholders(defaultProxyPaths[operation]!);
+    final actual = _placeholders(path);
+    final strayBrace =
+        path.replaceAll(_placeholderPattern, '').contains(RegExp(r'[{}]'));
+    if (strayBrace || !listEquals(expected, actual)) {
+      final wanted = expected.isEmpty
+          ? 'no placeholders'
+          : 'exactly the placeholders '
+              '${expected.map((p) => '{$p}').join(', ')}, once each';
+      throw ArgumentError.value(path, name,
+          'must contain $wanted, like "${defaultProxyPaths[operation]}"');
+    }
+  }
+
+  /// [prefix] followed by [path] with each `{name}` placeholder replaced by
+  /// the URI-encoded value from [values], then `?query` when [query] is set.
+  static Uri _buildUri(
+    String prefix,
+    String path, {
+    Map<String, String> values = const {},
+    String? query,
+  }) {
+    final filled = path.replaceAllMapped(
+        _placeholderPattern, (m) => Uri.encodeComponent(values[m[1]]!));
+    return Uri.parse('$prefix$filled${query == null ? '' : '?$query'}');
+  }
+
+  /// The URL of [operation] for this instance.
+  Uri _uri(ProxyOperation operation, [Map<String, String> values = const {}]) =>
+      _buildUri(_urlPrefix, _paths[operation]!, values: values);
+
+  /// Headers sent on every request: `Authorization` (when there is a token),
+  /// the client app headers, then [headers], then the result of
+  /// [headersProvider]. Each layer replaces any earlier header with the same
+  /// name (compared case-insensitively).
+  static Future<Map<String, String>> _resolveHeaders({
+    String? token,
+    String? clientAppName,
+    String? clientAppVersion,
+    Map<String, String> headers = const {},
+    BiometryHeadersProvider? headersProvider,
+  }) async {
+    final result = <String, String>{
+      if (token != null) 'Authorization': 'Bearer $token',
+      if (clientAppName != null && clientAppName.isNotEmpty)
+        'X-Client-App': clientAppName,
+      if (clientAppVersion != null && clientAppVersion.isNotEmpty)
+        'X-Client-App-Version': clientAppVersion,
+    };
+    void apply(Map<String, String> layer) {
+      layer.forEach((name, value) {
+        result.removeWhere((k, _) => k.toLowerCase() == name.toLowerCase());
+        result[name] = value;
+      });
+    }
+
+    apply(headers);
+    if (headersProvider != null) apply(await headersProvider());
+    return result;
   }
 
   /// Disposes the Biometry class.
@@ -309,21 +633,11 @@ class Biometry {
 
   /// Fetches a new session ID from the API.
   static Future<String> _fetchSessionId(
-    String token,
-    http.Client client, {
-    String? clientAppName,
-    String? clientAppVersion,
-  }) async {
-    final uri = Uri.parse('$_apiGatewayV2/sessions?warmup=true');
-
-    final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $token';
-    if (clientAppName != null && clientAppName.isNotEmpty) {
-      request.headers['X-Client-App'] = clientAppName;
-    }
-    if (clientAppVersion != null && clientAppVersion.isNotEmpty) {
-      request.headers['X-Client-App-Version'] = clientAppVersion;
-    }
+    Uri uri,
+    Map<String, String> headers,
+    http.Client client,
+  ) async {
+    final request = http.Request('POST', uri)..headers.addAll(headers);
 
     final response = await client.send(request);
     final responseBody = await http.Response.fromStream(response);
@@ -354,7 +668,7 @@ class Biometry {
   /// If [phoneNumber] is provided, the API additionally runs a SIM-swap
   /// fraud check for that number.
   Future<http.Response> endSession({String? phoneNumber}) async {
-    final uri = Uri.parse('$_apiGatewayV2/sessions/$sessionId/end');
+    final uri = _uri(ProxyOperation.endSession, {'session_id': sessionId});
     debugPrint("End session: $uri");
 
     final body = jsonEncode({
@@ -362,11 +676,10 @@ class Biometry {
     });
 
     final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..headers['Content-Type'] = 'application/json'
       ..body = body;
 
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final response = await _client.send(request);
     if (response.statusCode == 200) {
       // clear all files in the temp directory
@@ -425,12 +738,11 @@ class Biometry {
           'No face image available. Please authenticate a document first.');
     }
 
-    final uri = Uri.parse('$_apiGatewayV2/enrollments/face');
+    final uri = _uri(ProxyOperation.enrollFace);
 
     final requestJson = jsonEncode({'user_id': _userId});
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(
         await http.MultipartFile.fromPath(
@@ -448,7 +760,7 @@ class Biometry {
       print('Headers: ${request.headers}');
     }
 
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -470,7 +782,7 @@ class Biometry {
     required File videoFile,
     String? vocabulary,
   }) async {
-    final uri = Uri.parse('$_apiGatewayV2/enrollments/voice');
+    final uri = _uri(ProxyOperation.enrollVoice);
 
     final fileExtension = videoFile.path.split('.').last.toLowerCase();
     final contentType =
@@ -483,7 +795,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'voice',
@@ -497,7 +808,7 @@ class Biometry {
       print('Fields: ${request.fields}');
     }
 
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -523,7 +834,7 @@ class Biometry {
   /// [provider] and [mrzProvider] override the project's default document
   /// authenticity / MRZ extraction providers when supplied.
   Future<http.Response> docAuth({String? provider, String? mrzProvider}) async {
-    final uri = Uri.parse('$_apiGatewayV2/documents/check');
+    final uri = _uri(ProxyOperation.checkDocument);
     var docFile = await scanDocument();
     debugPrint("docFile: $docFile");
     final filePath = _stripFileUriPrefix(docFile);
@@ -539,7 +850,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'document',
@@ -551,7 +861,7 @@ class Biometry {
       ));
 
     // Send the request and wait for the response stream to complete.
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -582,7 +892,7 @@ class Biometry {
           'A video file is required when useSessionVideo is false.');
     }
 
-    final uri = Uri.parse('$_apiGatewayV2/face-match');
+    final uri = _uri(ProxyOperation.faceMatch);
 
     final requestJson = jsonEncode({
       'user_id': _userId,
@@ -591,7 +901,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(
         await http.MultipartFile.fromPath(
@@ -618,7 +927,7 @@ class Biometry {
       print("use_session_video: $useSessionVideo");
     }
 
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -649,7 +958,7 @@ class Biometry {
     String? trigger,
     String? vocabulary,
   }) async {
-    final uri = Uri.parse('$_apiGatewayV2/liveness');
+    final uri = _uri(ProxyOperation.liveness);
 
     final requestJson = jsonEncode({
       'user_id': _userId,
@@ -661,7 +970,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'video',
@@ -670,7 +978,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -685,7 +993,7 @@ class Biometry {
     required File video,
     String? vocabulary,
   }) async {
-    final uri = Uri.parse('$_apiGatewayV2/face-verify');
+    final uri = _uri(ProxyOperation.faceVerify);
 
     final requestJson = jsonEncode({
       'user_id': _userId,
@@ -697,7 +1005,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'video',
@@ -706,7 +1013,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -722,7 +1029,7 @@ class Biometry {
     required File video,
     String? vocabulary,
   }) async {
-    final uri = Uri.parse('$_apiGatewayV2/voice-verify');
+    final uri = _uri(ProxyOperation.voiceVerify);
 
     final requestJson = jsonEncode({
       'user_id': _userId,
@@ -732,7 +1039,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'voice',
@@ -741,7 +1047,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -758,7 +1064,7 @@ class Biometry {
   /// verdict — poll `GET /v2/deepfake/checks/{id}` (not yet wrapped by this
   /// SDK) using the returned check `id` if you need the final result.
   Future<http.Response> deepfakeCheck({required File video}) async {
-    final uri = Uri.parse('$_apiGatewayV2/deepfake/checks');
+    final uri = _uri(ProxyOperation.deepfakeCheck);
 
     final requestJson = jsonEncode({
       'user_id': _userId,
@@ -766,7 +1072,6 @@ class Biometry {
     });
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token'
       ..fields['request'] = requestJson
       ..files.add(await http.MultipartFile.fromPath(
         'video',
@@ -775,7 +1080,7 @@ class Biometry {
             MediaType('video', video.path.split('.').last.toLowerCase()),
       ));
 
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -791,14 +1096,13 @@ class Biometry {
   /// `allowConsent(consent: false)`, there is currently no way to withdraw
   /// a recorded approval through this API.
   Future<http.Response> approveConsent({required String consentId}) async {
-    final uri = Uri.parse(
-        '$_apiGatewayV2/consents/${Uri.encodeComponent(consentId)}/approve/${Uri.encodeComponent(_userId)}');
+    final uri = _uri(ProxyOperation.approveConsent,
+        {'consent_id': consentId, 'user_id': _userId});
 
-    final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_token';
+    final request = http.Request('POST', uri);
 
     debugPrint("request: $request");
-    _addClientAppHeaders(request);
+    await _addHeaders(request);
     final response = await _client.send(request);
     final httpResponse = await http.Response.fromStream(response);
     if (httpResponse.statusCode >= 200 && httpResponse.statusCode < 300) {
@@ -880,13 +1184,18 @@ class Biometry {
     }
   }
 
-  void _addClientAppHeaders(http.BaseRequest request) {
-    if (_clientAppName != null && _clientAppName!.isNotEmpty) {
-      request.headers['X-Client-App'] = _clientAppName!;
-    }
-    if (_clientAppVersion != null && _clientAppVersion!.isNotEmpty) {
-      request.headers['X-Client-App-Version'] = _clientAppVersion!;
-    }
+  Future<Map<String, String>> _requestHeaders() => _resolveHeaders(
+        token: _token,
+        clientAppName: _clientAppName,
+        clientAppVersion: _clientAppVersion,
+        headers: _headers,
+        headersProvider: _headersProvider,
+      );
+
+  /// Adds `Authorization` (when there is a token), the client app headers and
+  /// the custom headers from [initialize] to [request].
+  Future<void> _addHeaders(http.BaseRequest request) async {
+    request.headers.addAll(await _requestHeaders());
   }
 
   String _stripFileUriPrefix(String uri) {
@@ -912,18 +1221,11 @@ class Biometry {
 
   /// Retrieves all consent approvals recorded for the current user.
   Future<List<ConsentApproval>> getConsentApprovals() async {
-    final uri = Uri.parse(
-        '$_apiGatewayV2/consents/my-approvals/${Uri.encodeComponent(_userId)}');
+    final uri = _uri(ProxyOperation.getConsentApprovals, {'user_id': _userId});
 
     final response = await _client.get(
       uri,
-      headers: {
-        'Authorization': 'Bearer $_token',
-        if (_clientAppName != null && _clientAppName!.isNotEmpty)
-          'X-Client-App': _clientAppName!,
-        if (_clientAppVersion != null && _clientAppVersion!.isNotEmpty)
-          'X-Client-App-Version': _clientAppVersion!,
-      },
+      headers: await _requestHeaders(),
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
